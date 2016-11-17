@@ -15,6 +15,9 @@ module STAN
       # Connection to NATS, either owned or borrowed
       @nats = nc
 
+      # STAN subscriptions
+      @subs = {}
+
       # Cluster to which we are connecting
       @cluster_id = nil
       @client_id = nil
@@ -97,26 +100,35 @@ module STAN
         @sub_req_subject = resp.subRequests.freeze
         @unsub_req_subject = resp.unsubRequests.freeze
         @close_req_subject = resp.closeRequests.freeze
-      end.resume
 
-      # If callback given then we send a close request on exit
-      if block_given?
-        yield self
+        # If callback given then we send a close request on exit
+        if block_given?
+          yield self
 
-        # Close connection to 
-        result = STAN::Protocol::CloseRequest.new(clientID: @client_id)
-        p req
-        sid = @nats.request(@close_req_subject, req.to_proto, max: 1) do |raw|
-          p raw
+          # Close session to the STAN cluster
+          f = Fiber.current
+          req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
+          sid = @nats.request(@close_req_subject, req.to_proto, max: 1) do |raw|
+            f.resume(raw)
+          end
+          @nats.timeout(sid, 1, expected: 1) { f.resume(nil) }
+
+          # Close request response
+          raw = Fiber.yield
+          resp = STAN::Protocol::CloseResponse.decode(raw)
+          if not resp.error.empty?
+            raise Error.new("stan: close response error: #{resp.error}")
+          end
         end
-        p "result: #{result} || #{sid}"
-      end
+      end.resume
     end
 
     def publish(subject, payload)
+      puts "TODO: Publish"
     end
 
     def subscribe(subject)
+      puts "TODO: Subscribe"
     end
   end
 end

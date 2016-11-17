@@ -4,7 +4,6 @@ describe 'Client - Specification' do
 
   it 'should connect and close on block exit' do
     NATS.start do |nc|
-
       # Borrow the connection to NATS, meaning that we will
       # not be owning the connection.
       stan = STAN::Client.new(nc)
@@ -13,15 +12,13 @@ describe 'Client - Specification' do
       # then we disconnect on exit.
       client_id = "client-#{rand(100)}"
       stan.connect("test-cluster", client_id) do |sc|
-        p "----------- #{Time.now.to_f} : #{sc}"
-        # sc.subscribe("hello") do |msg|
-        #   # Message has been received
-        # end
+        sc.subscribe("hello") do |msg|
+          # Message has been received
+        end
 
         sc.publish("hello", "world") do
           # Message has been published
         end
-
       end
 
       EM.add_timer(1) do
