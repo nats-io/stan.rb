@@ -18,6 +18,9 @@ describe 'Client - Specification' do
 
         sc.publish("hello", "world") do
           # Message has been published
+          puts "published message!!!!"
+
+          # Though should be received ack
         end
       end
 

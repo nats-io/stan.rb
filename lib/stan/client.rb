@@ -1,5 +1,6 @@
 require 'nats/client'
 require 'fiber'
+require 'securerandom'
 
 module STAN
 
@@ -17,6 +18,9 @@ module STAN
 
       # STAN subscriptions
       @subs = {}
+
+      # Publish Ack (guid => ack)
+      @pub_acks = {}
 
       # Cluster to which we are connecting
       @cluster_id = nil
@@ -39,6 +43,9 @@ module STAN
       # For initial connect request to discover subjects used by
       # the streaming server.
       @discover_subject = nil
+
+      # For processing received acks from the server
+      @ack_subject = nil
     end
 
     # Plugs into a NATS Streaming cluster, establishing a connection
@@ -50,6 +57,9 @@ module STAN
 
       # Prepare connect discovery request
       @discover_subject = "_STAN.discover.#{@cluster_id}".freeze
+
+      # Prepare acks processing subscription
+      @ack_subject = "_STAN.acks.#{STAN.create_guid}".freeze
 
       case options[:nats]
       when Hash
@@ -76,6 +86,11 @@ module STAN
         p "--- Heartbeat: #{msg}"
       end
 
+      # Acks processing
+      @nats.subscribe(@ack_subject) do |msg|
+        # Process ack
+        p "--- Ack: #{msg}"
+      end
 
       req = STAN::Protocol::ConnectRequest.new({
         clientID: @client_id,
@@ -102,6 +117,7 @@ module STAN
         @close_req_subject = resp.closeRequests.freeze
 
         # If callback given then we send a close request on exit
+        # and wrap up session to STAN.
         if block_given?
           yield self
 
@@ -116,19 +132,50 @@ module STAN
           # Close request response
           raw = Fiber.yield
           resp = STAN::Protocol::CloseResponse.decode(raw)
-          if not resp.error.empty?
+
+          unless resp.error.empty?
             raise Error.new("stan: close response error: #{resp.error}")
           end
         end
       end.resume
     end
 
-    def publish(subject, payload)
-      puts "TODO: Publish"
+    # Publish will publish to the cluster and wait for an ack
+    def publish(subject, payload, &blk)
+      puts "TODO: Publish "
+
+      subject = "#{@pub_prefix}.#{subject}"
+      guid = STAN.create_guid
+
+      pe = STAN::Protocol::PubMsg.new({
+        clientID: @client_id,
+        guid: guid,
+        subject: subject,
+        data: payload
+      })
+
+      # This should be on a fiber as well
+      @ack_map[guid] = proc do
+        puts "--- ACK was processed!!!"
+        blk.call if blk
+      end
+
+      p subject
+      p @ack_subject
+      @nats.publish(subject, pe.to_proto, @ack_subject) do
+        # Published, so next wait for the ack to be processed
+        p :published
+      end
     end
 
     def subscribe(subject)
       puts "TODO: Subscribe"
+    end
+  end
+
+  class << self
+    def create_guid
+      SecureRandom.hex(11)
     end
   end
 end
