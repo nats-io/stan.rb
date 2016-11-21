@@ -1,5 +1,6 @@
 require 'nats/io/client'
 require 'securerandom'
+require 'monitor'
 
 module STAN
 
@@ -9,18 +10,25 @@ module STAN
   # When we detect we cannot connect to the server
   class ConnectError < Error; end
 
+  # When we detect we have a request timeout
+  class TimeoutError < Error; end
+
   class Client
+    include MonitorMixin
+
     attr_reader :nats
 
-    def initialize(nc=nil)
+    def initialize
+      super
+
       # Connection to NATS, either owned or borrowed
-      @nats = nc
+      @nats = nil
 
       # STAN subscriptions
       @subs = {}
 
       # Publish Ack (guid => ack)
-      @pub_acks = {}
+      @pub_ack_map = {}
 
       # Cluster to which we are connecting
       @cluster_id = nil
@@ -80,24 +88,17 @@ module STAN
       # Heartbeat subscription
       @hb_inbox = (STAN.create_inbox).freeze
 
-      # Subscription for processing heartbeat requests
-      nats.subscribe(@hb_inbox) do |msg|
-        # Received heartbeat message
-        # p "--- Heartbeat: #{msg}"
-      end
+      # Setup acks and heartbeats processing callbacks
+      nats.subscribe(@hb_inbox)    { |raw| process_heartbeats(raw) }
+      nats.subscribe(@ack_subject) { |raw| process_ack(raw) }
 
-      # Acks processing
-      nats.subscribe(@ack_subject) do |msg|
-        # Process ack
-        # p "--- Ack: #{msg}"
-      end
-
+      # Initial connect request to discover subjects to be used
+      # for communicating with STAN.
       req = STAN::Protocol::ConnectRequest.new({
         clientID: @client_id,
         heartbeatInbox: @hb_inbox
       })
 
-      # Connect request to discover subjects to communicate with STAN.
       # TODO: Check for error and bail if required
       raw = nats.request(@discover_subject, req.to_proto)
       resp = STAN::Protocol::ConnectResponse.decode(raw.data)
@@ -113,7 +114,7 @@ module STAN
 
         # Close session to the STAN cluster
         req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
-        raw = nats.request(@close_req_subject, req.to_proto, max: 1)
+        raw = nats.request(@close_req_subject, req.to_proto)
 
         resp = STAN::Protocol::CloseResponse.decode(raw.data)
         unless resp.error.empty?
@@ -123,8 +124,9 @@ module STAN
     end
 
     # Publish will publish to the cluster and wait for an ack
-    def publish(subject, payload, &blk)
+    def publish(subject, payload, opts={}, &blk)
       subject = "#{@pub_prefix}.#{subject}"
+      future = nil
       guid = STAN.create_guid
 
       pe = STAN::Protocol::PubMsg.new({
@@ -134,17 +136,70 @@ module STAN
         data: payload
       })
 
-      # This should be on a fiber as well
-      @ack_map[guid] = proc do
-        blk.call if blk
+      if blk
+        # Asynchronously handled
+        synchronize do
+          # Map ack to guid          
+          @pub_ack_map[guid] = proc do |ack|
+            # If block is given, handle the result asynchronously
+            case blk.arity
+            when 0 then blk.call
+            when 1 then blk.call(ack.guid)
+            when 2 then blk.call(ack.guid, ack.error)
+            end
+          end
+          nats.publish(subject, pe.to_proto, @ack_subject)
+        end       
+      else
+        # Waits for response before giving back control
+        future = new_cond
+        opts[:timeout] ||= 30 # Default Ack Wait
+        synchronize do
+          # Map ack to guid
+          ack_response = nil
+          @pub_ack_map[guid] = proc do |ack|
+            ack_response = ack
+            future.signal
+          end
+
+          # Send publish request and wait for the ack response
+          nats.publish(subject, pe.to_proto, @ack_subject)
+          start_time = NATS::MonotonicTime.now          
+          future.wait(opts[:timeout])
+          end_time = NATS::MonotonicTime.now
+          if (end_time - start_time) > opts[:timeout]
+            raise TimeoutError.new("stan: timeout")
+          end
+          return ack_response
+        end
       end
 
-      nats.publish(subject, pe.to_proto, @ack_subject) do
-        # Published, so next wait for the ack to be processed
-      end
+      # TODO: Processing of acks expiration
     end
 
     def subscribe(subject)
+    end
+
+    private
+
+    def process_ack(data)
+      # Process ack
+      pub_ack = STAN::Protocol::PubAck.decode(data)
+      unless pub_ack.error.empty?
+        raise Error.new("stan: pub ack error: #{pub_ack.error}")
+      end
+
+      synchronize do
+        if cb = @pub_ack_map[pub_ack.guid]
+          cb.call(pub_ack)
+        end
+      end
+
+      # FIXME: This should handle errors asynchronously
+    end
+
+    def process_heartbeats(data)
+      # Received heartbeat message
     end
   end
 

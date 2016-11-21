@@ -1,35 +1,36 @@
 require 'spec_helper'
 require 'securerandom'
-require 'monitor'
 
 describe 'Client - Specification' do
 
   it 'should connect and close on block exit' do
     msgs = []
-    msgs.extend(MonitorMixin)
 
     nc = NATS::IO::Client.new
     nc.connect(:servers => ['nats://127.0.0.1:4222'])
 
     # Borrow the connection to NATS, meaning that we will
     # not be owning the connection.
-    stan = STAN::Client.new(nc)
+    stan = STAN::Client.new
 
     # Discover cluster and send a message, and if block given
     # then we disconnect on exit.
     client_id = "client-#{SecureRandom.hex(5)}"
-    stan.connect("test-cluster", client_id) do |sc|
-      future = msgs.new_cond
-      
-      sc.subscribe("hello") do |msg|
+    stan.connect("test-cluster", client_id, nats: nc) do |sc|
+
+      sc.subscribe("hello") do |result, err|
         # Message has been received
       end
 
-      sc.publish("hello", "world") do
-        # Message has been published
-
-        # Though should be received ack
+      10.times do |n|
+        sc.publish("hello", "world-#{n}") do |guid, error|
+          # Message has been published and acked
+          puts "Ack: #{guid} || Error: #{error}"
+        end
       end
+
+      ack = sc.publish("hello", "!!!!", timeout: 1)
+      puts "Ack: #{ack.guid} || Error: #{ack.error}"
     end
   end
 
