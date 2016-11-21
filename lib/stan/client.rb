@@ -117,19 +117,13 @@ module STAN
         blk.call(self)
 
         # Close session to the STAN cluster
-        req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
-        raw = nats.request(@close_req_subject, req.to_proto)
-
-        resp = STAN::Protocol::CloseResponse.decode(raw.data)
-        unless resp.error.empty?
-          raise Error.new("stan: close response error: #{resp.error}")
-        end
+        close
       end
     end
 
     # Publish will publish to the cluster and wait for an ack
     def publish(subject, payload, opts={}, &blk)
-      subject = "#{@pub_prefix}.#{subject}"
+      stan_subject = "#{@pub_prefix}.#{subject}"
       future = nil
       guid = STAN.create_guid
 
@@ -155,7 +149,7 @@ module STAN
 
             @pub_ack_map.delete(ack.guid)
           end
-          nats.publish(subject, pe.to_proto, @ack_subject)
+          nats.publish(stan_subject, pe.to_proto, @ack_subject)
         end
       else
         # Waits for response before giving back control
@@ -164,30 +158,43 @@ module STAN
         synchronize do
           # Map ack to guid
           ack_response = nil
+
+          # FIXME: Maybe use fiber instead?
           @pub_ack_map[guid] = proc do |ack|
+            # Capture the ack response
             ack_response = ack
             future.signal
           end
 
           # Send publish request and wait for the ack response
-          nats.publish(subject, pe.to_proto, @ack_subject)
+          nats.publish(stan_subject, pe.to_proto, @ack_subject)
           start_time = NATS::MonotonicTime.now
           future.wait(opts[:timeout])
           end_time = NATS::MonotonicTime.now
           if (end_time - start_time) > opts[:timeout]
-            @pub_ack_map.delete(ack_response.guid)            
+            @pub_ack_map.delete(guid)
             raise TimeoutError.new("stan: timeout")
           end
 
           # Remove ack
-          @pub_ack_map.delete(ack_response.guid)
-          return ack_response.guid
+          @pub_ack_map.delete(guid)
+          return guid
         end
       end
-      # TODO: Processing of acks expiration
+      # TODO: Loop for processing of expired acks
     end
 
     def subscribe(subject)
+    end
+
+    def close
+      req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
+      raw = nats.request(@close_req_subject, req.to_proto)
+
+      resp = STAN::Protocol::CloseResponse.decode(raw.data)
+      unless resp.error.empty?
+        raise Error.new(resp.error)
+      end
     end
 
     private
