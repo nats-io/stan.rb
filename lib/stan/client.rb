@@ -139,7 +139,7 @@ module STAN
       if blk
         # Asynchronously handled
         synchronize do
-          # Map ack to guid          
+          # Map ack to guid
           @pub_ack_map[guid] = proc do |ack|
             # If block is given, handle the result asynchronously
             case blk.arity
@@ -147,9 +147,11 @@ module STAN
             when 1 then blk.call(ack.guid)
             when 2 then blk.call(ack.guid, ack.error)
             end
+
+            @pub_ack_map.delete(ack.guid)
           end
           nats.publish(subject, pe.to_proto, @ack_subject)
-        end       
+        end
       else
         # Waits for response before giving back control
         future = new_cond
@@ -164,12 +166,13 @@ module STAN
 
           # Send publish request and wait for the ack response
           nats.publish(subject, pe.to_proto, @ack_subject)
-          start_time = NATS::MonotonicTime.now          
+          start_time = NATS::MonotonicTime.now
           future.wait(opts[:timeout])
           end_time = NATS::MonotonicTime.now
           if (end_time - start_time) > opts[:timeout]
             raise TimeoutError.new("stan: timeout")
           end
+          @pub_ack_map.delete(ack_response.guid)
           return ack_response
         end
       end
