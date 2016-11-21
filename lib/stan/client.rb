@@ -4,6 +4,10 @@ require 'monitor'
 
 module STAN
 
+  DEFAULT_ACK_WAIT         = 30 # Ack timeout in seconds
+  DEFAULT_ACKS_SUBJECT     = "_STAN.acks".freeze
+  DEFAULT_DISCOVER_SUBJECT = "_STAN.discover".freeze
+
   # Errors
   class Error < StandardError; end
 
@@ -64,10 +68,10 @@ module STAN
       @options    = options
 
       # Prepare connect discovery request
-      @discover_subject = "_STAN.discover.#{@cluster_id}".freeze
+      @discover_subject = "#{DEFAULT_DISCOVER_SUBJECT}.#{@cluster_id}".freeze
 
       # Prepare acks processing subscription
-      @ack_subject = "_STAN.acks.#{STAN.create_guid}".freeze
+      @ack_subject = "#{DEFAULT_ACKS_SUBJECT}.#{STAN.create_guid}".freeze
 
       if @nats.nil?
         case options[:nats]
@@ -142,10 +146,11 @@ module STAN
           # Map ack to guid
           @pub_ack_map[guid] = proc do |ack|
             # If block is given, handle the result asynchronously
+            error = ack.error.empty? ? nil : Error.new(ack.error)
             case blk.arity
             when 0 then blk.call
             when 1 then blk.call(ack.guid)
-            when 2 then blk.call(ack.guid, ack.error)
+            when 2 then blk.call(ack.guid, error)
             end
 
             @pub_ack_map.delete(ack.guid)
@@ -155,7 +160,7 @@ module STAN
       else
         # Waits for response before giving back control
         future = new_cond
-        opts[:timeout] ||= 30 # Default Ack Wait
+        opts[:timeout] ||= DEFAULT_ACK_WAIT
         synchronize do
           # Map ack to guid
           ack_response = nil
@@ -170,13 +175,15 @@ module STAN
           future.wait(opts[:timeout])
           end_time = NATS::MonotonicTime.now
           if (end_time - start_time) > opts[:timeout]
+            @pub_ack_map.delete(ack_response.guid)            
             raise TimeoutError.new("stan: timeout")
           end
+
+          # Remove ack
           @pub_ack_map.delete(ack_response.guid)
-          return ack_response
+          return ack_response.guid
         end
       end
-
       # TODO: Processing of acks expiration
     end
 
@@ -186,6 +193,8 @@ module STAN
     private
 
     def process_ack(data)
+      # FIXME: This should handle errors asynchronously in case there are
+
       # Process ack
       pub_ack = STAN::Protocol::PubAck.decode(data)
       unless pub_ack.error.empty?
@@ -193,12 +202,11 @@ module STAN
       end
 
       synchronize do
+        # Yield the ack response back to original publisher caller
         if cb = @pub_ack_map[pub_ack.guid]
           cb.call(pub_ack)
         end
       end
-
-      # FIXME: This should handle errors asynchronously
     end
 
     def process_heartbeats(data)

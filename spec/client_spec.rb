@@ -16,6 +16,8 @@ describe 'Client - Specification' do
     # Discover cluster and send a message, and if block given
     # then we disconnect on exit.
     client_id = "client-#{SecureRandom.hex(5)}"
+    acks = []
+    msgs = []
     stan.connect("test-cluster", client_id, nats: nc) do |sc|
 
       sc.subscribe("hello") do |result, err|
@@ -24,13 +26,24 @@ describe 'Client - Specification' do
 
       10.times do |n|
         sc.publish("hello", "world-#{n}") do |guid, error|
-          # Message has been published and acked
-          puts "Ack: #{guid} || Error: #{error}"
+          # Message has been published and acked at this point
+          acks << guid
+          expect(error).to be_nil
         end
       end
 
-      ack = sc.publish("hello", "!!!!", timeout: 1)
-      puts "Ack: #{ack.guid} || Error: #{ack.error}"
+      # Synchronously receives the result or raises
+      # an exception in case there was an error
+      ack = sc.publish("hello", "again", timeout: 1)
+      acks << ack
+
+      # Wait for the messages to have been published
+      sleep 1
+    end
+
+    expect(acks.count).to eql(11)
+    acks.each do |guid|
+      expect(guid.size).to eql(22)
     end
   end
 
