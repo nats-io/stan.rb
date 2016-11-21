@@ -1,5 +1,4 @@
-require 'nats/client'
-require 'fiber'
+require 'nats/io/client'
 require 'securerandom'
 
 module STAN
@@ -11,6 +10,7 @@ module STAN
   class ConnectError < Error; end
 
   class Client
+    attr_reader :nats
 
     def initialize(nc=nil)
       # Connection to NATS, either owned or borrowed
@@ -50,7 +50,7 @@ module STAN
 
     # Plugs into a NATS Streaming cluster, establishing a connection
     # to NATS in case there is not one available to be borrowed.
-    def connect(cluster_id, client_id, options={})
+    def connect(cluster_id, client_id, options={}, &blk)
       @cluster_id = cluster_id
       @client_id  = client_id
       @options    = options
@@ -61,35 +61,35 @@ module STAN
       # Prepare acks processing subscription
       @ack_subject = "_STAN.acks.#{STAN.create_guid}".freeze
 
-      case options[:nats]
-      when Hash
-        # Custom NATS options in case borrowed connection not present
-        # can be passed to establish a connection and have stan client
-        # owning it.
-        # TODO: Synchronously establish connection to NATS here
-        opts = options[:nats] || {}
-      when NATS::EM_CONNECTION_CLASS
-        # Check for case when connection is of type NATS client
-        # and throw an error here instead.
-        @nats = options[:nats]
+      if @nats.nil?
+        case options[:nats]
+        when Hash
+          # Custom NATS options in case borrowed connection not present
+          # can be passed to establish a connection and have stan client
+          # owning it.
+          @nats = NATS::IO::Client.new
+          nats.connect(options[:nats])
+        when NATS::IO::Client
+          @nats = options[:nats]
+        end
       end
 
       # If no connection to NATS present at this point then bail already
-      raise ConnectError.new("stan: invalid connection to NATS") unless @nats
+      raise ConnectError.new("stan: invalid connection to nats") unless @nats
 
       # Heartbeat subscription
-      @hb_inbox = (NATS.create_inbox).freeze
+      @hb_inbox = (STAN.create_inbox).freeze
 
       # Subscription for processing heartbeat requests
-      @nats.subscribe(@hb_inbox) do |msg|
+      nats.subscribe(@hb_inbox) do |msg|
         # Received heartbeat message
-        p "--- Heartbeat: #{msg}"
+        # p "--- Heartbeat: #{msg}"
       end
 
       # Acks processing
-      @nats.subscribe(@ack_subject) do |msg|
+      nats.subscribe(@ack_subject) do |msg|
         # Process ack
-        p "--- Ack: #{msg}"
+        # p "--- Ack: #{msg}"
       end
 
       req = STAN::Protocol::ConnectRequest.new({
@@ -98,52 +98,32 @@ module STAN
       })
 
       # Connect request to discover subjects to communicate with STAN.
-      Fiber.new do
-        # TODO: Check for error and bail if required
-        f = Fiber.current
-        sid = @nats.request(@discover_subject, req.to_proto, max: 1) do |raw|
-          f.resume(raw)
+      # TODO: Check for error and bail if required
+      raw = nats.request(@discover_subject, req.to_proto)
+      resp = STAN::Protocol::ConnectResponse.decode(raw.data)
+      @pub_prefix = resp.pubPrefix.freeze
+      @sub_req_subject = resp.subRequests.freeze
+      @unsub_req_subject = resp.unsubRequests.freeze
+      @close_req_subject = resp.closeRequests.freeze
+
+      # If callback given then we send a close request on exit
+      # and wrap up session to STAN.
+      if blk
+        blk.call(self)
+
+        # Close session to the STAN cluster
+        req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
+        raw = nats.request(@close_req_subject, req.to_proto, max: 1)
+
+        resp = STAN::Protocol::CloseResponse.decode(raw.data)
+        unless resp.error.empty?
+          raise Error.new("stan: close response error: #{resp.error}")
         end
-
-        # Timeout the request within a second in case failing to connect
-        # to STAN cluster.
-        @nats.timeout(sid, 1, :expected => 1) { f.resume(nil) }
-
-        raw = Fiber.yield
-        resp = STAN::Protocol::ConnectResponse.decode(raw)
-        @pub_prefix = resp.pubPrefix.freeze
-        @sub_req_subject = resp.subRequests.freeze
-        @unsub_req_subject = resp.unsubRequests.freeze
-        @close_req_subject = resp.closeRequests.freeze
-
-        # If callback given then we send a close request on exit
-        # and wrap up session to STAN.
-        if block_given?
-          yield self
-
-          # Close session to the STAN cluster
-          f = Fiber.current
-          req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
-          sid = @nats.request(@close_req_subject, req.to_proto, max: 1) do |raw|
-            f.resume(raw)
-          end
-          @nats.timeout(sid, 1, expected: 1) { f.resume(nil) }
-
-          # Close request response
-          raw = Fiber.yield
-          resp = STAN::Protocol::CloseResponse.decode(raw)
-
-          unless resp.error.empty?
-            raise Error.new("stan: close response error: #{resp.error}")
-          end
-        end
-      end.resume
+      end
     end
 
     # Publish will publish to the cluster and wait for an ack
     def publish(subject, payload, &blk)
-      puts "TODO: Publish "
-
       subject = "#{@pub_prefix}.#{subject}"
       guid = STAN.create_guid
 
@@ -156,26 +136,25 @@ module STAN
 
       # This should be on a fiber as well
       @ack_map[guid] = proc do
-        puts "--- ACK was processed!!!"
         blk.call if blk
       end
 
-      p subject
-      p @ack_subject
-      @nats.publish(subject, pe.to_proto, @ack_subject) do
+      nats.publish(subject, pe.to_proto, @ack_subject) do
         # Published, so next wait for the ack to be processed
-        p :published
       end
     end
 
     def subscribe(subject)
-      puts "TODO: Subscribe"
     end
   end
 
   class << self
     def create_guid
       SecureRandom.hex(11)
+    end
+
+    def create_inbox
+      SecureRandom.hex(13)
     end
   end
 end

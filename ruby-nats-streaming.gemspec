@@ -20,6 +20,6 @@ spec = Gem::Specification.new do |s|
     lib/stan/version.rb
   ]
 
-  s.add_dependency('nats', '~> 0.8')
+  s.add_dependency('nats-pure')
   s.add_dependency('google-protobuf')
 end
