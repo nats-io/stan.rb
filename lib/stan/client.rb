@@ -4,14 +4,21 @@ require 'monitor'
 
 module STAN
 
-  DEFAULT_ACK_WAIT         = 30   # Ack timeout in seconds
-  DEFAULT_MAX_INFLIGHT     = 1024 # Max number of inflight acks
-  DEFAULT_CONNECT_TIMEOUT  = 2    # Connect timeout in seconds
+  # Subject namespaces for clients to ack and connect
   DEFAULT_ACKS_SUBJECT     = "_STAN.acks".freeze
   DEFAULT_DISCOVER_SUBJECT = "_STAN.discover".freeze
 
+  # Ack timeout in seconds
+  DEFAULT_ACK_WAIT         = 30
+
+  # Max number of inflight acks
+  DEFAULT_MAX_INFLIGHT     = 1024
+
+  # Connect timeout in seconds
+  DEFAULT_CONNECT_TIMEOUT  = 2
+
   # Max number of inflight pub acks
-  DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16_384
+  DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16384
 
   # Errors
   class Error < StandardError; end
@@ -268,7 +275,7 @@ module STAN
     private
 
     def process_ack(data)
-      # FIXME: This should handle errors asynchronously in case there are
+      # FIXME: This should handle errors asynchronously in case there are any
 
       # Process ack
       pub_ack = STAN::Protocol::PubAck.decode(data)
@@ -286,9 +293,9 @@ module STAN
       # TODO: Async error handler
     end
 
-    def process_heartbeats(data)
-      # Received heartbeat message
-      p "Received heartbeat: #{data}"
+    def process_heartbeats(data, reply, subject)
+      # No payload assumed, just reply to the heartbeat.
+      nats.publish(reply, '')
     rescue => e
       # TODO: Async error handler
     end
