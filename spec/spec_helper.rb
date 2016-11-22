@@ -114,3 +114,14 @@ def wait_for(future, opts={})
   duration = end_time - start_time
   fail if duration > opts[:timeout]
 end
+
+def with_nats(opts={})
+  nc = NATS::IO::Client.new
+  begin
+    nc.connect(opts)
+    yield nc
+  ensure
+    nc.close
+  end
+rescue
+end

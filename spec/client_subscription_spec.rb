@@ -70,49 +70,47 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :timedelta, time: $time)' do
     it 'should replay messages older than 2 sec' do
-      nc = NATS::IO::Client.new
-      nc.connect(:servers => ['nats://127.0.0.1:4222'])
-
-      # Borrow the connection to NATS, meaning that we will
-      # not be owning the connection.
-      stan = STAN::Client.new
-
-      # Discover cluster and send a message, and if block given
-      # then we disconnect on exit.
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
-      stan.connect("test-cluster", client_id, nats: nc) do |sc|
-        # Send some messages and the server should replay them back to us
-        # since within the interval.
-        1.upto(10).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            acks << guid
-            expect(error).to be_nil
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+
+        # Discover cluster and send a message, and if block given
+        # then we disconnect on exit.
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          # Send some messages and the server should replay them back to us
+          # since within the interval.
+          1.upto(10).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
           end
-        end
 
-        # These below won't be received
-        sleep 3
-        11.upto(20).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            acks << guid
-            expect(error).to be_nil
+          # These below won't be received
+          sleep 3
+          11.upto(20).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
           end
+
+          # Synchronously receives the result or raises
+          # an exception in case there was an error
+          ack = sc.publish("hello", "again", timeout: 1)
+          acks << ack
+
+          # Take a unix timestamp in seconds with optional nanoseconds if float.
+          # Replay all messages which have been received in the last hour
+          sc.subscribe("hello", start_at: :timedelta, time: Time.now.to_f - 2) do |msg|
+            msgs << msg
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1
         end
-
-        # Synchronously receives the result or raises
-        # an exception in case there was an error
-        ack = sc.publish("hello", "again", timeout: 1)
-        acks << ack
-
-        # Take a unix timestamp in seconds with optional nanoseconds if float.
-        # Replay all messages which have been received in the last hour
-        sc.subscribe("hello", start_at: :timedelta, time: Time.now.to_f - 2) do |msg|
-          msgs << msg
-        end
-
-        # Wait a bit for the messages to have been published
-        sleep 1
       end
 
       expect(msgs.count).to eql(11)
@@ -125,48 +123,48 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :first)' do
     it 'should replay all the messages' do
-      nc = NATS::IO::Client.new
-      nc.connect(:servers => ['nats://127.0.0.1:4222'])
-
-      # Borrow the connection to NATS, meaning that we will
-      # not be owning the connection.
-      stan = STAN::Client.new
-
-      # Discover cluster and send a message, and if block given
-      # then we disconnect on exit.
+      opts = { :servers => ['nats://127.0.0.1:4222']}
       acks = []
       msgs = []
-      stan.connect("test-cluster", client_id, nats: nc) do |sc|
-        # Send some messages and the server should replay them back to us
-        1.upto(10).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            # Message has been published and acked at this point
-            acks << guid
-            expect(error).to be_nil
+      with_nats(opts) do |nc|
+        # Borrow the connection to NATS, meaning that we will
+        # not be owning the connection.
+        stan = STAN::Client.new
+
+        # Discover cluster and send a message, and if block given
+        # then we disconnect on exit.
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          # Send some messages and the server should replay them back to us
+          1.upto(10).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              # Message has been published and acked at this point
+              acks << guid
+              expect(error).to be_nil
+            end
           end
-        end
 
-        11.upto(20).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            # Message has been published and acked at this point
-            acks << guid
-            expect(error).to be_nil
+          11.upto(20).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              # Message has been published and acked at this point
+              acks << guid
+              expect(error).to be_nil
+            end
           end
+
+          # Synchronously receives the result or raises
+          # an exception in case there was an error
+          ack = sc.publish("hello", "again", timeout: 1)
+          acks << ack
+
+          # Take a unix timestamp in seconds with optional nanoseconds if float.
+          # Replay all messages which have been received in the last hour
+          sc.subscribe("hello", start_at: :first) do |msg|
+            msgs << msg
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1
         end
-
-        # Synchronously receives the result or raises
-        # an exception in case there was an error
-        ack = sc.publish("hello", "again", timeout: 1)
-        acks << ack
-
-        # Take a unix timestamp in seconds with optional nanoseconds if float.
-        # Replay all messages which have been received in the last hour
-        sc.subscribe("hello", start_at: :first) do |msg|
-          msgs << msg
-        end
-
-        # Wait a bit for the messages to have been published
-        sleep 1
       end
 
       expect(msgs.count).to eql(21)
@@ -179,6 +177,58 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :sequence, sequence: $seq)' do
     it 'should replay all the messages' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          # Send some messages and the server should replay them back to us
+          1.upto(10).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              # Message has been published and acked at this point
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          11.upto(20).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              # Message has been published and acked at this point
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          # Synchronously receives the result or raises
+          # an exception in case there was an error
+          ack = sc.publish("hello", "again", timeout: 1)
+          acks << ack
+
+          # Take a unix timestamp in seconds with optional nanoseconds if float.
+          # Replay all messages which have been received in the last hour
+          sc.subscribe("hello", start_at: :sequence, sequence: 5) do |msg|
+            msgs << msg
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1
+        end
+      end
+
+      expect(msgs.count).to eql(17)
+      expect(acks.count).to eql(21)
+      acks.each do |guid|
+        expect(guid.size).to eql(22)
+      end
+    end
+  end
+
+  context 'with subscribe(deliver_all_available: true, manual_acks: true)' do
+    it 'should redeliver the messages' do
+      skip 'pending implementation'
+
       nc = NATS::IO::Client.new
       nc.connect(:servers => ['nats://127.0.0.1:4222'])
 
@@ -229,5 +279,5 @@ describe 'Client - Subscriptions' do
         expect(guid.size).to eql(22)
       end
     end
-  end
+  end  
 end
