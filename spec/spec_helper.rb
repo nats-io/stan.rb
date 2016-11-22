@@ -70,7 +70,7 @@ class NatsStreamingServerControl
     args += " #{@flags}" if @flags
 
     if ENV["DEBUG_NATS_TEST"] == "true"
-      system("nats-streaming-server #{args} -DV &")
+      system("nats-streaming-server #{args} -DV -SDV &")
     else
       system("nats-streaming-server #{args} 2> /dev/null &")
     end

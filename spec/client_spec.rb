@@ -7,6 +7,20 @@ describe 'Client - Specification' do
     "scid-#{SecureRandom.hex(5)}"
   }
 
+  before(:each) do
+    @s = NatsStreamingServerControl.new
+    @s.start_server(true)
+
+    # FIXME: We need to wait for the server to be ready...
+    sleep 1
+  end
+
+  after(:each) do
+    @s.kill_server
+    # FIXME: We need to wait for the server to be ready...
+    sleep 1
+  end
+
   it 'should connect and close on block exit' do
     nc = NATS::IO::Client.new
     nc.connect(:servers => ['nats://127.0.0.1:4222'])
