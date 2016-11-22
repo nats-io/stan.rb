@@ -347,14 +347,11 @@ module STAN
         sub_opts[:startPosition] = :NewOnly
       when :last_received
         sub_opts[:startPosition] = :LastReceived
-      when :time
+      when :time, :timedelta
+        # If using timedelta, need to get current time in UnixNano format
+        # FIXME: Implement support for :ago option which uses time in human.
         sub_opts[:startPosition] = :TimeDeltaStart
         start_at_time = options[:time] * 1_000_000_000
-        sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
-      when :timedelta
-        sub_opts[:startPosition] = :TimeDeltaStart
-        # If using timedelta, need to get current time in UnixNano format
-        start_at_time = (Time.now.to_f - options[:ago]) * 1_000_000_000
         sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
       when :sequence
         sub_opts[:startPosition] = :SequenceStart
