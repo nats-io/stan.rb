@@ -180,7 +180,7 @@ describe 'Client - Subscriptions' do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
-      
+
       with_nats(opts) do |nc|
         stan = STAN::Client.new
         stan.connect("test-cluster", client_id, nats: nc) do |sc|
@@ -226,58 +226,131 @@ describe 'Client - Subscriptions' do
   end
 
   context 'with subscribe(deliver_all_available: true, manual_acks: true)' do
-    it 'should redeliver the messages' do
-      skip 'pending implementation'
-
-      nc = NATS::IO::Client.new
-      nc.connect(:servers => ['nats://127.0.0.1:4222'])
-
-      # Borrow the connection to NATS, meaning that we will
-      # not be owning the connection.
-      stan = STAN::Client.new
-
-      # Discover cluster and send a message, and if block given
-      # then we disconnect on exit.
+    it 'should receive max inflight only if it does not ack' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
-      stan.connect("test-cluster", client_id, nats: nc) do |sc|
-        # Send some messages and the server should replay them back to us
-        1.upto(10).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            # Message has been published and acked at this point
-            acks << guid
-            expect(error).to be_nil
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          to_send = 100
+
+          1.upto(to_send).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
           end
-        end
 
-        11.upto(20).each do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            # Message has been published and acked at this point
-            acks << guid
-            expect(error).to be_nil
+          sub_opts = {
+            deliver_all_available: true,
+            manual_acks: true,
+            ack_wait: 1,  # seconds
+            max_inflight: 10
+          }
+          # Test we only receive max inflight if we do not ack
+          sc.subscribe("hello", sub_opts) do |msg|
+            msgs << msg
           end
+
+          # Wait a bit for the messages to have been published
+          sleep 1
         end
-
-        # Synchronously receives the result or raises
-        # an exception in case there was an error
-        ack = sc.publish("hello", "again", timeout: 1)
-        acks << ack
-
-        # Take a unix timestamp in seconds with optional nanoseconds if float.
-        # Replay all messages which have been received in the last hour
-        sc.subscribe("hello", start_at: :sequence, sequence: 5) do |msg|
-          msgs << msg
-        end
-
-        # Wait a bit for the messages to have been published
-        sleep 1
       end
 
-      expect(msgs.count).to eql(17)
-      expect(acks.count).to eql(21)
-      acks.each do |guid|
-        expect(guid.size).to eql(22)
-      end
+      expect(msgs.count).to eql(10)
+      expect(acks.count).to eql(100)
     end
-  end  
+
+    it 'should receive all messages capped by max inflight with manual acks' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          to_send = 100
+
+          1.upto(to_send).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          sub_opts = {
+            deliver_all_available: true,
+            manual_acks: true,
+            ack_wait: 1,  # seconds
+            max_inflight: 10
+          }
+
+          # Test we only receive max inflight if we do not ack
+          sc.subscribe("hello", sub_opts) do |msg|
+            msgs << msg
+
+            # Need to process acks manually here
+            expect(msg.sub.opts[:manual_acks]).to eql(true)
+            sc.ack(msg)
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1
+        end
+      end
+
+      expect(msgs.count).to eql(100)
+      expect(acks.count).to eql(100)
+    end
+
+    it "should redeliver the messages on ack timeout" do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          to_send = 100
+
+          1.upto(to_send).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          sub_opts = {
+            deliver_all_available: true,
+            manual_acks: true,
+            ack_wait: 1,  # seconds
+            max_inflight: to_send+1
+          }
+
+          # Test we only receive max inflight if we do not ack
+          sc.subscribe("hello", sub_opts) do |msg|
+            msgs << msg
+
+            # Need to process acks manually here
+            expect(msg.sub.opts[:manual_acks]).to eql(true)
+
+            # receives 100, but not acked manually so replayed
+            # sc.ack(msg)
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1.1
+        end
+      end
+
+      # Should have received the same sequence number twice
+      msgs_map = Hash.new { |h,k| h[k] = []}
+      msgs.each do |msg|
+        msgs_map[msg.proto.sequence] << msg
+      end
+      expect(msgs_map.keys.count).to eql(100)
+
+      expect(msgs.count).to eql(200)
+      expect(acks.count).to eql(100)
+    end
+  end
 end

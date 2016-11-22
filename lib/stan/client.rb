@@ -272,6 +272,20 @@ module STAN
       end
     end
 
+    # Ack takes a received message and publishes an ack manually
+    def ack(msg)
+      return unless sub
+      msg.sub.synchronize do
+        ack_proto = STAN::Protocol::Ack.new({
+          subject: msg.proto.subject,
+          sequence: msg.proto.sequence
+        }).to_proto
+        nats.publish(msg.sub.ack_inbox, ack_proto)
+      end
+    rescue => e
+      # TODO: Asynchronous error handling
+    end
+
     private
 
     def process_ack(data)
@@ -344,9 +358,9 @@ module STAN
       sub_opts[:qGroup] = options[:queue] if options[:queue]
       sub_opts[:durableName] = options[:durable_name] if options[:durable_name]
 
-      sub_opts[:clientID] = @client_id        
+      sub_opts[:clientID] = @client_id
       sub_opts[:maxInFlight] = options[:max_inflight]
-      sub_opts[:ackWaitInSecs] = options[:ack_wait]
+      sub_opts[:ackWaitInSecs] = options[:ack_wait] || options[:ack_timeout]
 
       # TODO: Error checking when all combinations of options are not declared
       case options[:start_at]
@@ -389,6 +403,7 @@ module STAN
   end
 
   # Data holder for sent messages
+  # It should have an Ack method as well to reply back?
   Msg = Struct.new(:proto, :sub)
 
   class << self
