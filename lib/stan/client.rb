@@ -11,7 +11,7 @@ module STAN
   DEFAULT_DISCOVER_SUBJECT = "_STAN.discover".freeze
 
   # Max number of inflight pub acks
-  DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16384
+  DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16_384
 
   # Errors
   class Error < StandardError; end
@@ -32,6 +32,7 @@ module STAN
 
       # Connection to NATS, either owned or borrowed
       @nats = nil
+      @borrowed_nats_connection = false
 
       # STAN subscriptions map
       @sub_map = {}
@@ -88,6 +89,7 @@ module STAN
           nats.connect(options[:nats])
         when NATS::IO::Client
           @nats = options[:nats]
+          @borrowed_nats_connection = true
         end
       end
 
@@ -140,7 +142,7 @@ module STAN
       })
 
       if blk
-        # Asynchronously handled
+        # Asynchronously handled if block given
         synchronize do
           # Map ack to guid
           @pub_ack_map[guid] = proc do |ack|
@@ -192,7 +194,6 @@ module STAN
 
     # Create subscription which dispatches messages to callback asynchronously
     def subscribe(subject, opts={}, &cb)
-      # Set defaults and norm
       options = {}
       options.merge!(opts)
       options[:ack_wait] ||= DEFAULT_ACK_WAIT
@@ -207,45 +208,34 @@ module STAN
       # Hold lock throughout
       sub.synchronize do
         # Listen for actual messages
-        sid = nats.subscribe(sub.inbox) { |raw| process_msg(raw) }
+        sid = nats.subscribe(sub.inbox) { |raw, reply, subject| process_msg(raw, reply, subject) }
         sub.sid = sid
 
         # Create the subscription request announcing the inbox on which
-        # we have made the NATS subscription for processing messages
-        sub_opts = {
-          clientID: @client_id,
-          subject: subject,
-          inbox: sub.inbox,
-          ackWaitInSecs:  options[:ack_wait],
-          maxInFlight:    options[:max_inflight]
-        }
+        # we have made the NATS subscription for processing messages.
+        # First, we normalize customized subscription options before
+        # encoding to protobuf.
+        sub_opts = normalize_sub_req_params(options)
 
-        # Normalize custom subscription options before encoding to protobuf
-        sub_opts[:qGroup] = options[:queue] if options[:queue]
-        sub_opts[:durableName] = options[:durable] if options[:durable]
-        sub_opts[:startPosition] = options[:start_position] if options[:start_position]
-        sub_opts[:startSequence] = options[:start_sequence] if options[:start_sequence]
-        sub_opts[:startTimeDelta] = options[:start_timedelta] if options[:start_timedelta]
+        # Set STAN subject and NATS inbox where we will be awaiting
+        # for the messages to be delivered.
+        sub_opts[:subject] = subject
+        sub_opts[:inbox] = sub.inbox
 
         sr = STAN::Protocol::SubscriptionRequest.new(sub_opts)
-        # TODO: Start position conditionals
-        # case sr.startPosition
-        # when
-        # end
-
         reply = nil
         response = nil
         begin
           reply = nats.request(@sub_req_subject, sr.to_proto, timeout: DEFAULT_CONNECT_TIMEOUT)
           response = STAN::Protocol::SubscriptionResponse.decode(reply.data)
         rescue NATS::IO::Timeout, Google::Protobuf::ParseError => e
-          # TODO: Error handling on unsubscribe
+          # FIXME: Error handling on unsubscribe
           nats.unsubscribe(sub.sid)
           raise e
         end
 
         unless response.error.empty?
-          # TODO: Error handling on unsubscribe
+          # FIXME: Error handling on unsubscribe
           nats.unsubscribe(sub.sid)
           raise Error.new(response.error)
         end
@@ -264,6 +254,15 @@ module STAN
       unless resp.error.empty?
         raise Error.new(resp.error)
       end
+
+      # TODO: If connection to nats was borrowed then we should
+      # unsubscribe from all topics from STAN.  If not borrowed
+      # and we own the connection, then we just close.
+      if @borrowed_nats_connection
+        @nats = nil
+      else
+        @nats.close
+      end
     end
 
     private
@@ -274,7 +273,7 @@ module STAN
       # Process ack
       pub_ack = STAN::Protocol::PubAck.decode(data)
       unless pub_ack.error.empty?
-        raise Error.new("stan: pub ack error: #{pub_ack.error}")
+        raise Error.new(pub_ack.error)
       end
 
       synchronize do
@@ -294,12 +293,79 @@ module STAN
       # TODO: Async error handler
     end
 
-    def process_msg(data)
+    def process_msg(data, reply, subject)
       # Process any received messages
-      msg_proto = STAN::Protocol::MsgProto.decode(data)
-      p msg_proto
+      msg = Msg.new
+      msg.proto = STAN::Protocol::MsgProto.decode(data)
+
+      # Lookup the subscription
+      sub = nil
+      synchronize do
+        sub = @sub_map[subject]
+      end
+      # Check if sub is no longer valid
+      return unless sub
+
+      # Store in msg for backlink
+      msg.sub = sub
+
+      cb = nil
+      ack_subject = nil
+      synchronize do
+        cb = sub.cb
+        ack_subject = sub.ack_inbox
+        # TODO: is_manual_ack = sub.opts.manual_acks
+      end
+
+      # Perform the callback if sub still subscribed
+      cb.call(msg) if cb
+
+      # Process auto-ack
+      # TODO: Manual ack?
+      ack = STAN::Protocol::Ack.new({
+        subject: msg.proto.subject,
+        sequence: msg.proto.sequence
+      })
+      nats.publish(@ack_subject, ack.to_proto)
+
     rescue => e
       # TODO: Async error handler
+    end
+
+    def normalize_sub_req_params(options)
+      sub_opts = {}
+      sub_opts[:qGroup] = options[:queue] if options[:queue]
+      sub_opts[:durableName] = options[:durable_name] if options[:durable_name]
+
+      sub_opts[:clientID] = @client_id        
+      sub_opts[:maxInFlight] = options[:max_inflight]
+      sub_opts[:ackWaitInSecs] = options[:ack_wait]
+
+      # TODO: Error checking when all combinations of options are not declared
+      case options[:start_at]
+      when :new_only
+        sub_opts[:startPosition] = :NewOnly
+      when :last_received
+        sub_opts[:startPosition] = :LastReceived
+      when :time
+        sub_opts[:startPosition] = :TimeDeltaStart
+        start_at_time = options[:time] * 1_000_000_000
+        sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
+      when :timedelta
+        sub_opts[:startPosition] = :TimeDeltaStart
+        # If using timedelta, need to get current time in UnixNano format
+        start_at_time = (Time.now.to_f - options[:ago]) * 1_000_000_000
+        sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
+      when :sequence
+        sub_opts[:startPosition] = :SequenceStart
+        sub_opts[:startSequence] = options[:sequence] || 0
+      when :first, :beginning
+        sub_opts[:startPosition] = :First
+      else
+        sub_opts[:startPosition] = :First if options[:deliver_all_available]
+      end
+
+      sub_opts
     end
   end
 
@@ -319,7 +385,7 @@ module STAN
   end
 
   # Data holder for sent messages
-  Msg = Struct.new(:msg, :sub)
+  Msg = Struct.new(:proto, :sub)
 
   class << self
     def create_guid

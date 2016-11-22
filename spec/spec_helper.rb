@@ -105,3 +105,12 @@ class NatsStreamingServerControl
     return false
   end
 end
+
+def wait_for(future, opts={})
+  opts[:timeout] ||= 5
+  start_time = NATS::MonotonicTime.now
+  future.wait(opts[:timeout])
+  end_time = NATS::MonotonicTime.now
+  duration = end_time - start_time
+  fail if duration > opts[:timeout]
+end
