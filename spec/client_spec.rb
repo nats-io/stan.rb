@@ -20,7 +20,8 @@ describe 'Client - Specification' do
     msgs = []
     stan.connect("test-cluster", client_id, nats: nc) do |sc|
 
-      sc.subscribe("hello") do |result, err|
+      # TODO: Normalize to ruby symbols for syntax sugar
+      sc.subscribe("hello", start_position: :First) do |result, err|
         # Message has been received
       end
 

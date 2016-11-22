@@ -4,9 +4,14 @@ require 'monitor'
 
 module STAN
 
-  DEFAULT_ACK_WAIT         = 30 # Ack timeout in seconds
+  DEFAULT_ACK_WAIT         = 30   # Ack timeout in seconds
+  DEFAULT_MAX_INFLIGHT     = 1024 # Max number of inflight acks
+  DEFAULT_CONNECT_TIMEOUT  = 2    # Connect timeout in seconds
   DEFAULT_ACKS_SUBJECT     = "_STAN.acks".freeze
   DEFAULT_DISCOVER_SUBJECT = "_STAN.discover".freeze
+
+  # Max number of inflight pub acks
+  DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16384
 
   # Errors
   class Error < StandardError; end
@@ -28,10 +33,10 @@ module STAN
       # Connection to NATS, either owned or borrowed
       @nats = nil
 
-      # STAN subscriptions
-      @subs = {}
+      # STAN subscriptions map
+      @sub_map = {}
 
-      # Publish Ack (guid => ack)
+      # Publish Ack map (guid => ack)
       @pub_ack_map = {}
 
       # Cluster to which we are connecting
@@ -172,6 +177,7 @@ module STAN
           future.wait(opts[:timeout])
           end_time = NATS::MonotonicTime.now
           if (end_time - start_time) > opts[:timeout]
+            # Remove ack
             @pub_ack_map.delete(guid)
             raise TimeoutError.new("stan: timeout")
           end
@@ -184,9 +190,72 @@ module STAN
       # TODO: Loop for processing of expired acks
     end
 
-    def subscribe(subject)
+    # Create subscription which dispatches messages to callback asynchronously
+    def subscribe(subject, opts={}, &cb)
+      # Set defaults and norm
+      options = {}
+      options.merge!(opts)
+      options[:ack_wait] ||= DEFAULT_ACK_WAIT
+      options[:max_inflight] ||= DEFAULT_MAX_INFLIGHT
+
+      sub = Subscription.new(subject, options, cb)
+      sub.extend(MonitorMixin)
+      synchronize do
+        @sub_map[sub.inbox] = sub
+      end
+
+      # Hold lock throughout
+      sub.synchronize do
+        # Listen for actual messages
+        sid = nats.subscribe(sub.inbox) { |raw| process_msg(raw) }
+        sub.sid = sid
+
+        # Create the subscription request announcing the inbox on which
+        # we have made the NATS subscription for processing messages
+        sub_opts = {
+          clientID: @client_id,
+          subject: subject,
+          inbox: sub.inbox,
+          ackWaitInSecs:  options[:ack_wait],
+          maxInFlight:    options[:max_inflight]
+        }
+
+        # Normalize custom subscription options before encoding to protobuf
+        sub_opts[:qGroup] = options[:queue] if options[:queue]
+        sub_opts[:durableName] = options[:durable] if options[:durable]
+        sub_opts[:startPosition] = options[:start_position] if options[:start_position]
+        sub_opts[:startSequence] = options[:start_sequence] if options[:start_sequence]
+        sub_opts[:startTimeDelta] = options[:start_timedelta] if options[:start_timedelta]
+
+        sr = STAN::Protocol::SubscriptionRequest.new(sub_opts)
+        # TODO: Start position conditionals
+        # case sr.startPosition
+        # when
+        # end
+
+        reply = nil
+        response = nil
+        begin
+          reply = nats.request(@sub_req_subject, sr.to_proto, timeout: DEFAULT_CONNECT_TIMEOUT)
+          response = STAN::Protocol::SubscriptionResponse.decode(reply.data)
+        rescue NATS::IO::Timeout, Google::Protobuf::ParseError => e
+          # TODO: Error handling on unsubscribe
+          nats.unsubscribe(sub.sid)
+          raise e
+        end
+
+        unless response.error.empty?
+          # TODO: Error handling on unsubscribe
+          nats.unsubscribe(sub.sid)
+          raise Error.new(response.error)
+        end
+        sub.ack_inbox = response.ackInbox.freeze
+
+        return sub
+      end
     end
 
+    # Close wraps us the session with the NATS Streaming server
     def close
       req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
       raw = nats.request(@close_req_subject, req.to_proto)
@@ -209,17 +278,48 @@ module STAN
       end
 
       synchronize do
-        # Yield the ack response back to original publisher caller
+        # yield the ack response back to original publisher caller
         if cb = @pub_ack_map[pub_ack.guid]
           cb.call(pub_ack)
         end
       end
+    rescue => e
+      # TODO: Async error handler
     end
 
     def process_heartbeats(data)
       # Received heartbeat message
+      p "Received heartbeat: #{data}"
+    rescue => e
+      # TODO: Async error handler
+    end
+
+    def process_msg(data)
+      # Process any received messages
+      msg_proto = STAN::Protocol::MsgProto.decode(data)
+      p msg_proto
+    rescue => e
+      # TODO: Async error handler
     end
   end
+
+  class Subscription
+    attr_reader :subject, :queue, :inbox,  :opts, :cb
+    attr_accessor :sid, :ack_inbox
+
+    def initialize(subject, opts={}, cb)
+      @subject = subject
+      @queue = opts[:queue]
+      @inbox = STAN.create_inbox
+      @opts = opts
+      @cb = cb
+      @sid = nil
+      @ack_inbox = nil
+    end
+  end
+
+  # Data holder for sent messages
+  Msg = Struct.new(:msg, :sub)
 
   class << self
     def create_guid
