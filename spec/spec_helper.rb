@@ -1,7 +1,6 @@
 $:.unshift('./lib')
 require 'tempfile'
 require 'stan/client'
-require 'stan/pb/protocol.pb'
 
 class NatsStreamingServerControl
 

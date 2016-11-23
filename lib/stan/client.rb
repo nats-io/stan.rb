@@ -1,3 +1,4 @@
+require 'stan/pb/protocol.pb'
 require 'nats/io/client'
 require 'securerandom'
 require 'monitor'
@@ -404,7 +405,15 @@ module STAN
 
   # Data holder for sent messages
   # It should have an Ack method as well to reply back?
-  Msg = Struct.new(:proto, :sub)
+  Msg = Struct.new(:proto, :sub) do
+    def data
+      self.proto.data
+    end
+    def sequence
+      self.proto.sequence
+    end
+    alias seq sequence
+  end
 
   class << self
     def create_guid
