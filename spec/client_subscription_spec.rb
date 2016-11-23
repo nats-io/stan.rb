@@ -22,42 +22,67 @@ describe 'Client - Subscriptions' do
     sleep 1
   end
 
-  context 'with subscribe(start_at: :time, time: $time)' do
-    it 'should replay messages older than an hour' do
-      nc = NATS::IO::Client.new
-      nc.connect(:servers => ['nats://127.0.0.1:4222'])
-
-      # Borrow the connection to NATS, meaning that we will
-      # not be owning the connection.
-      stan = STAN::Client.new
-
-      # Discover cluster and send a message, and if block given
-      # then we disconnect on exit.
-      acks = []
-      msgs = []
+  it "should be able to subscribe and unsubscribe" do
+    opts = { :servers => ['nats://127.0.0.1:4222'] }
+    acks = []
+    msgs = []
+    stan = STAN::Client.new    
+    with_nats(opts) do |nc|
       stan.connect("test-cluster", client_id, nats: nc) do |sc|
-        # Send some messages and the server should replay them back to us
-        10.times do |n|
-          sc.publish("hello", "world-#{n}") do |guid, error|
-            # Message has been published and acked at this point
-            acks << guid
-            expect(error).to be_nil
-          end
-        end
-
-        # Synchronously receives the result or raises
-        # an exception in case there was an error
-        ack = sc.publish("hello", "again", timeout: 1)
-        acks << ack
-
-        # Take a unix timestamp in seconds with optional nanoseconds if float.
-        # Replay all messages which have been received in the last hour
-        sc.subscribe("hello", start_at: :time, time: Time.now.to_i - 3600) do |msg|
+        # By default, it only receives any newly published events,
+        # this can be defined explicitly via start_at: :new_only
+        sub = sc.subscribe("foo") do |msg|
           msgs << msg
         end
 
-        # Wait a bit for the messages to have been published
+        # Publishes happen synchronously
+        5.times { acks << sc.publish("foo", "bar") }
+
+        # Stop receiving messages in this subscription
         sleep 1
+        expect do
+          sub.unsubscribe
+        end.to_not raise_error
+
+        # Publishes happen synchronously
+        5.times { acks << sc.publish("foo", "bar") }
+      end
+    end
+    expect(msgs.count).to eql(5)
+    expect(acks.count).to eql(10)    
+  end
+
+  context 'with subscribe(start_at: :time, time: $time)' do
+    it 'should replay messages older than an hour' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          # Send some messages and the server should replay them back to us
+          10.times do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              # Message has been published and acked at this point
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          # Synchronously receives the result or raises
+          # an exception in case there was an error
+          ack = sc.publish("hello", "again", timeout: 1)
+          acks << ack
+
+          # Take a unix timestamp in seconds with optional nanoseconds if float.
+          # Replay all messages which have been received in the last hour
+          sc.subscribe("hello", start_at: :time, time: Time.now.to_i - 3600) do |msg|
+            msgs << msg
+          end
+
+          # FIXME: Wait a bit for the messages to have been published
+          sleep 1
+        end
       end
 
       expect(msgs.count).to eql(11)

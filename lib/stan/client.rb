@@ -10,13 +10,13 @@ module STAN
   DEFAULT_DISCOVER_SUBJECT = "_STAN.discover".freeze
 
   # Ack timeout in seconds
-  DEFAULT_ACK_WAIT         = 30
+  DEFAULT_ACK_WAIT = 30
 
   # Max number of inflight acks
-  DEFAULT_MAX_INFLIGHT     = 1024
+  DEFAULT_MAX_INFLIGHT = 1024
 
   # Connect timeout in seconds
-  DEFAULT_CONNECT_TIMEOUT  = 2
+  DEFAULT_CONNECT_TIMEOUT = 2
 
   # Max number of inflight pub acks
   DEFAULT_MAX_PUB_ACKS_INFLIGHT = 16384
@@ -33,7 +33,7 @@ module STAN
   class Client
     include MonitorMixin
 
-    attr_reader :nats
+    attr_reader :nats, :options, :client_id, :sub_map, :unsub_req_subject
 
     def initialize
       super
@@ -76,10 +76,13 @@ module STAN
 
     # Plugs into a NATS Streaming cluster, establishing a connection
     # to NATS in case there is not one available to be borrowed.
-    def connect(cluster_id, client_id, options={}, &blk)
+    def connect(cluster_id, client_id, opts={}, &blk)
       @cluster_id = cluster_id
       @client_id  = client_id
-      @options    = options
+      @options    = opts
+
+      # Defaults
+      @options[:connect_timeout] ||= DEFAULT_CONNECT_TIMEOUT
 
       # Prepare connect discovery request
       @discover_subject = "#{DEFAULT_DISCOVER_SUBJECT}.#{@cluster_id}".freeze
@@ -98,6 +101,10 @@ module STAN
         when NATS::IO::Client
           @nats = options[:nats]
           @borrowed_nats_connection = true
+        else
+          # Try to connect with NATS defaults
+          @nats = NATS::IO::Client.new
+          nats.connect(servers: ["nats://127.0.0.1:4222"])
         end
       end
 
@@ -119,7 +126,7 @@ module STAN
       })
 
       # TODO: Check for error and bail if required
-      raw = nats.request(@discover_subject, req.to_proto)
+      raw = nats.request(@discover_subject, req.to_proto, timeout: options[:connect_timeout])
       resp = STAN::Protocol::ConnectResponse.decode(raw.data)
       @pub_prefix = resp.pubPrefix.freeze
       @sub_req_subject = resp.subRequests.freeze
@@ -202,12 +209,13 @@ module STAN
 
     # Create subscription which dispatches messages to callback asynchronously
     def subscribe(subject, opts={}, &cb)
-      options = {}
-      options.merge!(opts)
-      options[:ack_wait] ||= DEFAULT_ACK_WAIT
-      options[:max_inflight] ||= DEFAULT_MAX_INFLIGHT
+      sub_options = {}
+      sub_options.merge!(opts)
+      sub_options[:ack_wait] ||= DEFAULT_ACK_WAIT
+      sub_options[:max_inflight] ||= DEFAULT_MAX_INFLIGHT
+      sub_options[:stan] = self
 
-      sub = Subscription.new(subject, options, cb)
+      sub = Subscription.new(subject, sub_options, cb)
       sub.extend(MonitorMixin)
       synchronize do
         @sub_map[sub.inbox] = sub
@@ -223,7 +231,7 @@ module STAN
         # we have made the NATS subscription for processing messages.
         # First, we normalize customized subscription options before
         # encoding to protobuf.
-        sub_opts = normalize_sub_req_params(options)
+        sub_opts = normalize_sub_req_params(sub_options)
 
         # Set STAN subject and NATS inbox where we will be awaiting
         # for the messages to be delivered.
@@ -247,6 +255,8 @@ module STAN
           nats.unsubscribe(sub.sid)
           raise Error.new(response.error)
         end
+
+        # Capture ack inbox for the subscription
         sub.ack_inbox = response.ackInbox.freeze
 
         return sub
@@ -289,6 +299,7 @@ module STAN
 
     private
 
+    # Process received publishes acks
     def process_ack(data)
       # FIXME: This should handle errors asynchronously in case there are any
 
@@ -308,6 +319,7 @@ module STAN
       # TODO: Async error handler
     end
 
+    # Process heartbeats by replying to them
     def process_heartbeats(data, reply, subject)
       # No payload assumed, just reply to the heartbeat.
       nats.publish(reply, '')
@@ -315,8 +327,8 @@ module STAN
       # TODO: Async error handler
     end
 
+    # Process any received messages
     def process_msg(data, reply, subject)
-      # Process any received messages
       msg = Msg.new
       msg.proto = STAN::Protocol::MsgProto.decode(data)
 
@@ -354,18 +366,21 @@ module STAN
       # TODO: Async error handler
     end
 
-    def normalize_sub_req_params(options)
+    def normalize_sub_req_params(opts)
       sub_opts = {}
-      sub_opts[:qGroup] = options[:queue] if options[:queue]
-      sub_opts[:durableName] = options[:durable_name] if options[:durable_name]
+      sub_opts[:qGroup] = opts[:queue] if opts[:queue]
+      sub_opts[:durableName] = opts[:durable_name] if opts[:durable_name]
 
       sub_opts[:clientID] = @client_id
-      sub_opts[:maxInFlight] = options[:max_inflight]
-      sub_opts[:ackWaitInSecs] = options[:ack_wait] || options[:ack_timeout]
+      sub_opts[:maxInFlight] = opts[:max_inflight]
+      sub_opts[:ackWaitInSecs] = opts[:ack_wait] || opts[:ack_timeout]
 
       # TODO: Error checking when all combinations of options are not declared
-      case options[:start_at]
+      case opts[:start_at]
       when :new_only
+        # By default, it already acts as :new_only which
+        # without no initial replay, similar to bare NATS,
+        # but we allow setting it explicitly anyway.
         sub_opts[:startPosition] = :NewOnly
       when :last_received
         sub_opts[:startPosition] = :LastReceived
@@ -373,7 +388,7 @@ module STAN
         # If using timedelta, need to get current time in UnixNano format
         # FIXME: Implement support for :ago option which uses time in human.
         sub_opts[:startPosition] = :TimeDeltaStart
-        start_at_time = options[:time] * 1_000_000_000
+        start_at_time = opts[:time] * 1_000_000_000
         sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
       when :sequence
         sub_opts[:startPosition] = :SequenceStart
@@ -381,7 +396,7 @@ module STAN
       when :first, :beginning
         sub_opts[:startPosition] = :First
       else
-        sub_opts[:startPosition] = :First if options[:deliver_all_available]
+        sub_opts[:startPosition] = :First if opts[:deliver_all_available]
       end
 
       sub_opts
@@ -389,17 +404,67 @@ module STAN
   end
 
   class Subscription
-    attr_reader :subject, :queue, :inbox,  :opts, :cb
+    attr_reader :subject, :queue, :inbox, :options, :cb, :durable_name, :stan
     attr_accessor :sid, :ack_inbox
 
     def initialize(subject, opts={}, cb)
       @subject = subject
       @queue = opts[:queue]
       @inbox = STAN.create_inbox
+      @sid = nil # inbox subscription sid
       @opts = opts
       @cb = cb
-      @sid = nil
       @ack_inbox = nil
+      @stan = opts[:stan]
+      @durable_name = opts[:durable_name]
+    end
+
+    # Unsubscribe removes interest in the subscription.
+    # For durables, it means that the durable interest is also removed from
+    # the server. Restarting a durable with the same name will not resume
+    # the subscription, it will be considered a new one.
+    def unsubscribe
+      # TODO: yield errors to async error handler
+
+      synchronize do
+        stan.nats.unsubscribe(self.sid)
+      end
+
+      # Make client stop tracking the subscription inbox
+      # and grab unsub request subject under the lock.
+      unsub_subject = nil
+      stan.synchronize do
+        stan.sub_map.delete(self.ack_inbox)
+        unsub_subject = stan.unsub_req_subject
+      end
+
+      unsub_req = STAN::Protocol::UnsubscribeRequest.new({
+        clientID: stan.client_id,
+        subject: self.subject,
+        inbox: self.ack_inbox
+      })
+
+      p unsub_req
+      p unsub_subject
+
+      if self.durable_name
+        unsub_req[:durableName] = self.durable_name
+      end
+
+      raw = stan.nats.request(unsub_subject, unsub_req.to_proto, {
+        timeout: stan.options[:connect_timeout]
+      })
+      response = STAN::Protocol::SubscriptionResponse.decode(raw.data)
+      unless response.error.empty?
+        # FIXME: Error handling on unsubscribe
+        raise Error.new(response.error)
+      end
+      p response
+      # sub.ack_inbox = response.ackInbox.freeze
+    end
+
+    def close
+      # TODO
     end
   end
 
