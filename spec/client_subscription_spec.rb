@@ -51,6 +51,55 @@ describe 'Client - Subscriptions' do
     expect(acks.count).to eql(10)
   end
 
+  context 'with a distribution queue group' do
+    it "should be able to distribute messages" do
+      clients = Hash.new {|h,k| h[k] = {} }
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+
+      # Prepare a few parallel connections to NATS
+      ('A'...'E').each do |n|
+        name = "#{client_id}-#{n}"
+        nc = NATS::IO::Client.new
+        nc.connect(opts.merge({ name: name }))
+        clients[name][:nats] = nc
+        clients[name][:stan] = STAN::Client.new
+        clients[name][:acks] = []
+        clients[name][:msgs] = []
+      end
+
+      begin
+        # Connect each one of the clients to STAN
+        clients.each_pair do |name, c|
+          c[:stan].connect("test-cluster", name, nats: c[:nats])
+
+          # Basic queue subscription
+          c[:stan].subscribe("tasks", queue: "group") do |msg|
+            c[:msgs] << msg
+          end
+        end
+        name, client = clients.first
+
+        # Publish without a block and wait for acks
+        100.times do
+          client[:acks] << client[:stan].publish("tasks", "help")
+        end
+
+        result = clients.reduce(0) do |total, c|
+          name, client = c
+          expect(client[:msgs].count).to eql(25)
+          total + client[:msgs].count
+        end
+        expect(result).to eql(100)
+      ensure
+        # Wait for all clients to unplug from Streaming and NATS
+        clients.each_pair do |name, c|
+          c[:stan].close
+          c[:nats].close
+        end
+      end
+    end
+  end
+
   context 'with subscribe(start_at: :time, time: $time)' do
     it 'should replay messages older than an hour' do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
