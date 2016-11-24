@@ -88,11 +88,10 @@ describe 'Client - Specification' do
   context 'when not borrowing NATS connection' do
     it 'should connect and disconnect from NATS on block exit' do
       stan = STAN::Client.new
+      opts = { :servers => ["nats://127.0.0.1:4222"] }
       msgs = []
-      acks = []
-      stan.connect("test-cluster", "client-123", :nats => {
-                     :servers => ["nats://127.0.0.1:4222"]
-                   }) do |sc|
+      acks = []      
+      stan.connect("test-cluster", "client-123", nats: opts) do |sc|
         expect(stan.nats).to_not be_nil
 
         sc.subscribe("hello") do |msg|
@@ -100,9 +99,7 @@ describe 'Client - Specification' do
         end
 
         5.times do
-          sc.publish("hello", "world") do |guid, error|
-            acks << guid
-          end
+          acks << sc.publish("hello", "world")
         end
       end
 

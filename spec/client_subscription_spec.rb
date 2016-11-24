@@ -26,7 +26,7 @@ describe 'Client - Subscriptions' do
     opts = { :servers => ['nats://127.0.0.1:4222'] }
     acks = []
     msgs = []
-    stan = STAN::Client.new    
+    stan = STAN::Client.new
     with_nats(opts) do |nc|
       stan.connect("test-cluster", client_id, nats: nc) do |sc|
         # By default, it only receives any newly published events,
@@ -48,7 +48,7 @@ describe 'Client - Subscriptions' do
       end
     end
     expect(msgs.count).to eql(5)
-    expect(acks.count).to eql(10)    
+    expect(acks.count).to eql(10)
   end
 
   context 'with subscribe(start_at: :time, time: $time)' do
@@ -197,6 +197,39 @@ describe 'Client - Subscriptions' do
         expect(guid.size).to eql(22)
       end
     end
+
+    it 'should receive all messages capped by max inflight with auto acks' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          to_send = 50
+
+          1.upto(to_send).each do |n|
+            guid = sc.publish("hello", "world-#{n}")
+            acks << guid
+          end
+
+          # Acks should be occuring automatically but capped to inflight setting
+          sub_opts = {
+            deliver_all_available: true,
+            ack_wait: 1,  # seconds
+            max_inflight: 10
+          }
+          sc.subscribe("hello", sub_opts) do |msg|
+            msgs << msg
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 2
+        end
+      end
+
+      expect(acks.count).to eql(50)
+      expect(msgs.count).to eql(50)
+    end
   end
 
   context 'with subscribe(start_at: :sequence, sequence: $seq)' do
@@ -310,7 +343,6 @@ describe 'Client - Subscriptions' do
             max_inflight: 10
           }
 
-          # Test we only receive max inflight if we do not ack
           sc.subscribe("hello", sub_opts) do |msg|
             msgs << msg
 
@@ -328,7 +360,7 @@ describe 'Client - Subscriptions' do
       expect(acks.count).to eql(100)
     end
 
-    it "should redeliver the messages on ack timeout" do
+    it "should redeliver the messages from start on ack timeout" do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
@@ -376,6 +408,72 @@ describe 'Client - Subscriptions' do
 
       expect(msgs.count).to eql(200)
       expect(acks.count).to eql(100)
+    end
+
+    it "should redeliver the messages without processed acks on ack timeout" do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        stan.connect("test-cluster", client_id, nats: nc) do |sc|
+          to_send = 100
+
+          1.upto(to_send).each do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+            end
+          end
+
+          sub_opts = {
+            deliver_all_available: true,
+            manual_acks: true,
+            ack_wait: 1 # seconds
+          }
+
+          # Test we only receive max inflight if we do not ack
+          allow_seq_1 = false
+          allow_seq_2 = false
+          sc.subscribe("hello", sub_opts) do |msg|
+            if msg.seq == 1 and not allow_seq_1
+              allow_seq_1 = true
+              next
+            end
+            if msg.seq == 2 and not allow_seq_2
+              allow_seq_2 = true
+              next
+            end
+
+            # Allow all others
+            msgs << msg
+
+            # Need to process acks manually here
+            expect(msg.sub.options[:manual_acks]).to eql(true)
+
+            # receives 100, but first couple not acked manually so redelivered until the end
+            sc.ack(msg)
+          end
+
+          # Wait a bit for the messages to have been published
+          sleep 1.1
+        end
+      end
+
+      # Should have received the same sequence number twice
+      msgs_map = Hash.new { |h,k| h[k] = []}
+      msgs.each do |msg|
+        msgs_map[msg.proto.sequence] << msg
+      end
+      expect(msgs_map.keys.count).to eql(100)
+
+      expect(msgs.count).to eql(100)
+      expect(acks.count).to eql(100)
+
+      expect(msgs[-4].seq).to eql(99)
+      expect(msgs[-3].seq).to eql(100)
+      expect(msgs[-2].seq).to eql(1)
+      expect(msgs[-1].seq).to eql(2)
     end
   end
 end

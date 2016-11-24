@@ -12,7 +12,7 @@ module STAN
   # Ack timeout in seconds
   DEFAULT_ACK_WAIT = 30
 
-  # Max number of inflight acks
+  # Max number of inflight acks from received messages
   DEFAULT_MAX_INFLIGHT = 1024
 
   # Connect timeout in seconds
@@ -217,9 +217,7 @@ module STAN
 
       sub = Subscription.new(subject, sub_options, cb)
       sub.extend(MonitorMixin)
-      synchronize do
-        @sub_map[sub.inbox] = sub
-      end
+      synchronize { @sub_map[sub.inbox] = sub }
 
       # Hold lock throughout
       sub.synchronize do
@@ -293,8 +291,6 @@ module STAN
         }).to_proto
         nats.publish(msg.sub.ack_inbox, ack_proto)
       end
-    # rescue => e
-    # TODO: Asynchronous error handling
     end
 
     private
@@ -315,22 +311,22 @@ module STAN
           cb.call(pub_ack)
         end
       end
-    # rescue => e
-    # TODO: Async error handler
     end
 
     # Process heartbeats by replying to them
     def process_heartbeats(data, reply, subject)
       # No payload assumed, just reply to the heartbeat.
       nats.publish(reply, '')
-    # rescue => e
-    # TODO: Async error handler
     end
 
     # Process any received messages
     def process_msg(data, reply, subject)
       msg = Msg.new
       msg.proto = STAN::Protocol::MsgProto.decode(data)
+      msg_ack = STAN::Protocol::Ack.new({
+        subject: msg.proto.subject,
+        sequence: msg.proto.sequence
+      })
 
       # Lookup the subscription
       sub = nil
@@ -345,27 +341,18 @@ module STAN
 
       cb = nil
       ack_subject = nil
-      synchronize do
+      using_manual_acks = nil
+      sub.synchronize do
         cb = sub.cb
         ack_subject = sub.ack_inbox
-        # is_manual_ack = sub.options.manual_acks
-        # p is_manual_ack
+        using_manual_acks = sub.options[:manual_acks]
       end
 
       # Perform the callback if sub still subscribed
       cb.call(msg) if cb
 
-      # Process auto-ack
-      # TODO: Manual ack?
-      ack = STAN::Protocol::Ack.new({
-        subject: msg.proto.subject,
-        sequence: msg.proto.sequence
-      })
-      nats.publish(@ack_subject, ack.to_proto)
-
-    rescue => e
-      puts e.backtrace
-    # TODO: Async error handler
+      # Process auto-ack if not done manually
+      nats.publish(ack_subject, msg_ack.to_proto) if not using_manual_acks
     end
 
     def normalize_sub_req_params(opts)
@@ -426,8 +413,6 @@ module STAN
     # the server. Restarting a durable with the same name will not resume
     # the subscription, it will be considered a new one.
     def unsubscribe
-      # TODO: yield errors to async error handler
-
       synchronize do
         stan.nats.unsubscribe(self.sid)
       end
