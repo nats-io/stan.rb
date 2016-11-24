@@ -285,7 +285,7 @@ module STAN
 
     # Ack takes a received message and publishes an ack manually
     def ack(msg)
-      return unless sub
+      return unless msg.sub
       msg.sub.synchronize do
         ack_proto = STAN::Protocol::Ack.new({
           subject: msg.proto.subject,
@@ -293,8 +293,8 @@ module STAN
         }).to_proto
         nats.publish(msg.sub.ack_inbox, ack_proto)
       end
-    rescue => e
-      # TODO: Asynchronous error handling
+    # rescue => e
+    # TODO: Asynchronous error handling
     end
 
     private
@@ -315,16 +315,16 @@ module STAN
           cb.call(pub_ack)
         end
       end
-    rescue => e
-      # TODO: Async error handler
+    # rescue => e
+    # TODO: Async error handler
     end
 
     # Process heartbeats by replying to them
     def process_heartbeats(data, reply, subject)
       # No payload assumed, just reply to the heartbeat.
       nats.publish(reply, '')
-    rescue => e
-      # TODO: Async error handler
+    # rescue => e
+    # TODO: Async error handler
     end
 
     # Process any received messages
@@ -348,7 +348,8 @@ module STAN
       synchronize do
         cb = sub.cb
         ack_subject = sub.ack_inbox
-        # TODO: is_manual_ack = sub.opts.manual_acks
+        # is_manual_ack = sub.options.manual_acks
+        # p is_manual_ack
       end
 
       # Perform the callback if sub still subscribed
@@ -363,7 +364,8 @@ module STAN
       nats.publish(@ack_subject, ack.to_proto)
 
     rescue => e
-      # TODO: Async error handler
+      puts e.backtrace
+    # TODO: Async error handler
     end
 
     def normalize_sub_req_params(opts)
@@ -412,7 +414,7 @@ module STAN
       @queue = opts[:queue]
       @inbox = STAN.create_inbox
       @sid = nil # inbox subscription sid
-      @opts = opts
+      @options = opts
       @cb = cb
       @ack_inbox = nil
       @stan = opts[:stan]
@@ -456,8 +458,6 @@ module STAN
         # FIXME: Error handling on unsubscribe
         raise Error.new(response.error)
       end
-      p response
-      # sub.ack_inbox = response.ackInbox.freeze
     end
 
     def close

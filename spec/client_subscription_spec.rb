@@ -269,11 +269,12 @@ describe 'Client - Subscriptions' do
           sub_opts = {
             deliver_all_available: true,
             manual_acks: true,
-            ack_wait: 1,  # seconds
+            ack_wait: 1, # seconds
             max_inflight: 10
           }
+
           # Test we only receive max inflight if we do not ack
-          sc.subscribe("hello", sub_opts) do |msg|
+          sub = sc.subscribe("hello", sub_opts) do |msg|
             msgs << msg
           end
 
@@ -314,7 +315,7 @@ describe 'Client - Subscriptions' do
             msgs << msg
 
             # Need to process acks manually here
-            expect(msg.sub.opts[:manual_acks]).to eql(true)
+            expect(msg.sub.options[:manual_acks]).to eql(true)
             sc.ack(msg)
           end
 
@@ -355,7 +356,7 @@ describe 'Client - Subscriptions' do
             msgs << msg
 
             # Need to process acks manually here
-            expect(msg.sub.opts[:manual_acks]).to eql(true)
+            expect(msg.sub.options[:manual_acks]).to eql(true)
 
             # receives 100, but not acked manually so replayed
             # sc.ack(msg)
