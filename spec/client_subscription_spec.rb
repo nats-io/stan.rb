@@ -35,7 +35,7 @@ describe 'Client - Subscriptions' do
           msgs << msg
         end
 
-        # Publishes happen synchronously
+        # Publishes happen synchronously without a block
         5.times { acks << sc.publish("foo", "bar") }
 
         # Stop receiving messages in this subscription
@@ -43,12 +43,88 @@ describe 'Client - Subscriptions' do
           sub.unsubscribe
         end.to_not raise_error
 
-        # Publishes happen synchronously
+        # Should be acked but not received by this client
         5.times { acks << sc.publish("foo", "bar") }
       end
     end
     expect(msgs.count).to eql(5)
     expect(acks.count).to eql(10)
+  end
+
+  context 'with subscribe(start_at: :last_received)' do
+    it "should be able to use durable name to start at last received on streaming reconnect" do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      msgs = []
+      sc = STAN::Client.new
+
+      # Connect a and publish some messages
+      with_nats(opts) do |nc|
+        sc.connect("test-cluster", client_id, nats: nc)
+
+        sc.subscribe("foo", durable_name: "quux") do |msg|
+          msgs << msg
+        end
+
+        # We should not be able to create a second durable
+        # on the same subject.
+        expect do
+          sc.subscribe("foo", durable_name: "quux") do |msg|
+            msgs << msg
+          end
+        end.to raise_error(STAN::Error)
+
+        0.upto(4).each {|n| acks << sc.publish("foo", n.to_s) }
+
+        # Disconnect explicitly
+        sc.close
+      end
+      expect(acks.count).to eql(5)
+      expect(msgs.count).to eql(5)
+
+      # Reconnect trying to fetch last received message
+      non_durable_msgs = []
+      with_nats(opts) do |nc|
+        # Reconnect to STAN
+        sc.connect("test-cluster", client_id, nats: nc)
+
+        # Publish new messages and let subscription gather
+        # then via durable name and start receive.
+        5.upto(10).each {|n| acks << sc.publish("foo", n.to_s) }
+
+        sc.subscribe("foo", durable_name: "quux", start_at: :last_received) do |msg|
+          msgs << msg
+        end
+
+        # Regular subscription
+        sc.subscribe("foo", start_at: :first) do |msg|
+          non_durable_msgs << msg
+        end
+
+        11.upto(14).each {|n| acks << sc.publish("foo", n.to_s) }
+
+        # We should not be able to create a second durable
+        # on the same subject.
+        expect do
+          sc.subscribe("foo", durable_name: "quux") do |msg|
+            msgs << msg
+          end
+        end.to raise_error(STAN::Error)
+
+        sc.close
+      end
+      expect(acks.count).to eql(15)
+      expect(msgs.count).to eql(15)
+
+      seqs = {}
+      msgs.each do |msg|
+        seqs[msg.seq] = msg
+      end
+      0.upto(14).each do |n|
+        expect(msgs[n].seq).to eql(n+1)
+        expect(msgs[n].data).to eql(n.to_s)
+      end
+    end
   end
 
   context 'with a distribution queue group' do

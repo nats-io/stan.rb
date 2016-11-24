@@ -382,7 +382,7 @@ module STAN
       # TODO: Error checking when all combinations of options are not declared
       case opts[:start_at]
       when :new_only
-        # By default, it already acts as :new_only which
+        # By default, it already acts as :new_only which is
         # without no initial replay, similar to bare NATS,
         # but we allow setting it explicitly anyway.
         sub_opts[:startPosition] = :NewOnly
