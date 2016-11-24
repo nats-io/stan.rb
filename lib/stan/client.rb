@@ -392,7 +392,7 @@ module STAN
         sub_opts[:startTimeDelta] = (Time.now.to_f * 1_000_000_000) - start_at_time
       when :sequence
         sub_opts[:startPosition] = :SequenceStart
-        sub_opts[:startSequence] = options[:sequence] || 0
+        sub_opts[:startSequence] = opts[:sequence] || 0
       when :first, :beginning
         sub_opts[:startPosition] = :First
       else
@@ -443,9 +443,6 @@ module STAN
         subject: self.subject,
         inbox: self.ack_inbox
       })
-
-      p unsub_req
-      p unsub_subject
 
       if self.durable_name
         unsub_req[:durableName] = self.durable_name

@@ -39,7 +39,6 @@ describe 'Client - Subscriptions' do
         5.times { acks << sc.publish("foo", "bar") }
 
         # Stop receiving messages in this subscription
-        sleep 1
         expect do
           sub.unsubscribe
         end.to_not raise_error
@@ -201,7 +200,7 @@ describe 'Client - Subscriptions' do
   end
 
   context 'with subscribe(start_at: :sequence, sequence: $seq)' do
-    it 'should replay all the messages' do
+    it 'should replay messages starting from sequence' do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
