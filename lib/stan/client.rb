@@ -52,13 +52,18 @@ module STAN
       @cluster_id = nil
       @client_id = nil
 
-      # Inbox for period heartbeat messages
-      @heartbeat_inbox = nil
-
       # Connect options
       @options = {}
 
       # NATS Streaming subjects
+
+      # Inbox subscription for periodical heartbeat messages
+      @hb_inbox = nil
+      @hb_inbox_sid = nil
+
+      # Subscription for processing received acks from the server
+      @ack_subject = nil
+      @ack_subject_sid = nil
 
       # Publish prefix set by stan to which we append our subject on publish.
       @pub_prefix        = nil
@@ -69,9 +74,6 @@ module STAN
       # For initial connect request to discover subjects used by
       # the streaming server.
       @discover_subject = nil
-
-      # For processing received acks from the server
-      @ack_subject = nil
     end
 
     # Plugs into a NATS Streaming cluster, establishing a connection
@@ -115,8 +117,8 @@ module STAN
       @hb_inbox = (STAN.create_inbox).freeze
 
       # Setup acks and heartbeats processing callbacks
-      nats.subscribe(@hb_inbox)    { |raw| process_heartbeats(raw) }
-      nats.subscribe(@ack_subject) { |raw| process_ack(raw) }
+      @hb_inbox_sid    = nats.subscribe(@hb_inbox)    { |raw| process_heartbeats(raw) }
+      @ack_subject_sid = nats.subscribe(@ack_subject) { |raw| process_ack(raw) }
 
       # Initial connect request to discover subjects to be used
       # for communicating with STAN.
@@ -274,10 +276,23 @@ module STAN
       # TODO: If connection to nats was borrowed then we should
       # unsubscribe from all topics from STAN.  If not borrowed
       # and we own the connection, then we just close.
-      if @borrowed_nats_connection
-        @nats = nil
-      else
-        @nats.close
+      begin
+        # Remove all present subscriptions
+        @sub_map.each_pair do |_, sub|
+          nats.unsubscribe(sub.sid)
+        end
+
+        # Finally, remove the core subscriptions for STAN
+        nats.unsubscribe(@hb_inbox_sid)
+        nats.unsubscribe(@ack_subject_sid)
+      rescue => e
+        # TODO: Async error handling
+      ensure
+        if @borrowed_nats_connection
+          @nats = nil
+        else
+          @nats.close
+        end
       end
     end
 

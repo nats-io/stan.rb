@@ -222,9 +222,18 @@ describe 'Client - Subscriptions' do
             msgs << msg
           end
 
+          # Dummy subscription
+          sc.subscribe("hi", sub_opts) do |msg|
+            msgs << msg
+          end
+
           # Wait a bit for the messages to have been published
           sleep 2
         end
+
+        # Confirm internal state to check that no other subscriptions remained
+        subs = nc.instance_variable_get("@subs")
+        expect(subs.count).to eql(0)
       end
 
       expect(acks.count).to eql(50)

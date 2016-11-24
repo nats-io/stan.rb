@@ -22,29 +22,34 @@ describe 'Client - Specification' do
   end
 
   context "with borrowed NATS connection" do
-    it 'should connect to STAN and close session on connect block exit' do
-      nc = NATS::IO::Client.new
-      begin
-        nc.connect(:servers => ['nats://127.0.0.1:4222'])
-
-        # Borrow the connection to NATS, meaning that we will
-        # not be owning the connection.
+    it 'should connect to STAN and close session upon connect block exit' do
+      # Borrow the connection to NATS, meaning that we will
+      # not be owning the connection.
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      with_nats(opts) do |nc|
         stan = STAN::Client.new
 
         # Discover cluster and send a message, and if block given
         # then we disconnect on exit.
+        was_connected = false
         stan.connect("test-cluster", client_id, nats: nc) do
           # Check connected to STAN
           expect(stan.nats).to_not be_nil
+          was_connected = true
+
+          noop_sid = stan.subscribe("hello") { |msg| }
         end
+        expect(was_connected).to eql(true)
 
         # NATS connection no longer borrowed once we disconnect from STAN
         expect(stan.nats).to be_nil
 
         # Though original connection is still connected
         expect(nc.connected?).to eql(true)
-      ensure
-        nc.close rescue nil
+
+        # Confirm internal state to check that no other subscriptions remained
+        subs = nc.instance_variable_get("@subs")
+        expect(subs.count).to eql(0)
       end
     end
 
