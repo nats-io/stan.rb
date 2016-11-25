@@ -62,7 +62,6 @@ describe 'Client - Specification' do
 
         # Discover cluster and send a message, and if block given
         # then we disconnect on exit.
-        client_id = "client-#{SecureRandom.hex(5)}"
         acks = []
         sc.connect("test-cluster", client_id, nats: nc)
 
@@ -88,6 +87,45 @@ describe 'Client - Specification' do
         end
       end
     end
+
+    it 'should reconnect even if not closing gracefully after first connect' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      with_nats(opts) do |nc|
+        sc = STAN::Client.new
+        acks = []
+        sc.connect("test-cluster", client_id, nats: nc)
+
+        10.times do |n|
+          guid = sc.publish("hello", "world-#{n}")
+          acks << guid
+        end
+
+        expect(acks.count).to eql(10)
+      end
+
+      # Initial discovery message on reconnect would take at least 500ms
+      with_nats(opts) do |nc|
+        sc = STAN::Client.new
+        expect do
+          sc.connect("test-cluster", client_id, nats: nc, connect_timeout: 0.250)
+        end.to raise_error(NATS::IO::TimeoutError)
+      end
+
+      with_nats(opts) do |nc|
+        sc = STAN::Client.new
+        acks = []
+        expect do
+          sc.connect("test-cluster", client_id, nats: nc, connect_timeout: 1) do
+            10.times do |n|
+              guid = sc.publish("hello", "world-#{n}")
+              acks << guid
+            end
+
+            expect(acks.count).to eql(10)
+          end
+        end.to_not raise_error
+      end
+    end
   end
 
   context 'when not borrowing NATS connection' do
@@ -95,7 +133,7 @@ describe 'Client - Specification' do
       stan = STAN::Client.new
       opts = { :servers => ["nats://127.0.0.1:4222"] }
       msgs = []
-      acks = []      
+      acks = []
       stan.connect("test-cluster", "client-123", nats: opts) do |sc|
         expect(stan.nats).to_not be_nil
 

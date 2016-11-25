@@ -56,6 +56,9 @@ describe 'Client - Subscriptions' do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
       acks = []
       msgs = []
+      queue_msgs = []
+      non_durable_queue_msgs = []
+      plain_sub_msgs = []
       sc = STAN::Client.new
 
       # Connect a and publish some messages
@@ -64,6 +67,20 @@ describe 'Client - Subscriptions' do
 
         sc.subscribe("foo", durable_name: "quux") do |msg|
           msgs << msg
+        end
+
+        # Queue subscriptions can coexist with regular subscriptions
+        sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
+          queue_msgs << msg
+        end
+        sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
+          queue_msgs << msg
+        end
+        sc.subscribe("foo", queue: "bar") do |msg|
+          non_durable_queue_msgs << msg
+        end
+        sc.subscribe("foo") do |msg|
+          plain_sub_msgs << msg
         end
 
         # We should not be able to create a second durable
@@ -79,6 +96,9 @@ describe 'Client - Subscriptions' do
         # Disconnect explicitly
         sc.close
       end
+      expect(plain_sub_msgs.count).to eql(5)
+      expect(non_durable_queue_msgs.count).to eql(5)
+      expect(queue_msgs.count).to eql(5)
       expect(acks.count).to eql(5)
       expect(msgs.count).to eql(5)
 
