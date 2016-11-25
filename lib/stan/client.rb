@@ -47,6 +47,7 @@ module STAN
 
       # Publish Ack map (guid => ack)
       @pub_ack_map = {}
+      @pub_ack_queue = SizedQueue.new(DEFAULT_MAX_PUB_ACKS_INFLIGHT)
 
       # Cluster to which we are connecting
       @cluster_id = nil
@@ -173,6 +174,10 @@ module STAN
 
             @pub_ack_map.delete(ack.guid)
           end
+
+          # Use buffered queue to control number of outstanding acks
+          @pub_ack_queue << :ack
+
           nats.publish(stan_subject, pe.to_proto, @ack_subject)
         end
       else
@@ -189,6 +194,9 @@ module STAN
             ack_response = ack
             future.signal
           end
+
+          # Use buffered queue to control number of outstanding acks
+          @pub_ack_queue << :ack
 
           # Send publish request and wait for the ack response
           nats.publish(stan_subject, pe.to_proto, @ack_subject)
@@ -324,6 +332,9 @@ module STAN
         # yield the ack response back to original publisher caller
         if cb = @pub_ack_map[pub_ack.guid]
           cb.call(pub_ack)
+
+          # Unblock publishing queue
+          @pub_ack_queue.pop if @pub_ack_queue.size > 0
         end
       end
     end
