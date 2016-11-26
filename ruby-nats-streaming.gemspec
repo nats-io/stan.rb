@@ -20,6 +20,6 @@ spec = Gem::Specification.new do |s|
     lib/stan/version.rb
   ]
 
-  s.add_runtime_dependency('nats-pure', '~> 0')
-  s.add_runtime_dependency('google-protobuf', '~> 0')
+  s.add_runtime_dependency('nats-pure')
+  s.add_runtime_dependency('google-protobuf')
 end
