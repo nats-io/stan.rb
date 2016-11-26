@@ -40,7 +40,11 @@ $data = Array.new($data_size) { "%01x" % rand(16) }.join('').freeze
 
 stan = STAN::Client.new
 done = stan.new_cond
-stan.connect($cluster_name, $client_id, servers: ['nats://127.0.0.1:4222']) do
+options = {
+  nats: { servers: ['nats://127.0.0.1:4222'] },
+  max_pub_acks_inflight: 16384
+}
+stan.connect($cluster_name, $client_id, options) do
   $start   = Time.now
   $to_send = $count
 

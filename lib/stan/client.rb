@@ -47,7 +47,7 @@ module STAN
 
       # Publish Ack map (guid => ack)
       @pub_ack_map = {}
-      @pub_ack_queue = SizedQueue.new(DEFAULT_MAX_PUB_ACKS_INFLIGHT)
+      @pending_pub_acks = nil
 
       # Cluster to which we are connecting
       @cluster_id = nil
@@ -86,11 +86,15 @@ module STAN
 
       # Defaults
       @options[:connect_timeout] ||= DEFAULT_CONNECT_TIMEOUT
+      @options[:max_pub_acks_inflight] ||= DEFAULT_MAX_PUB_ACKS_INFLIGHT
+
+      # Buffered queue for controlling inflight published acks
+      @pending_pub_acks = SizedQueue.new(options[:max_pub_acks_inflight])
 
       # Prepare connect discovery request
       @discover_subject = "#{DEFAULT_DISCOVER_SUBJECT}.#{@cluster_id}".freeze
 
-      # Prepare acks processing subscription
+      # Prepare delivered msgs acks processing subscription
       @ack_subject = "#{DEFAULT_ACKS_SUBJECT}.#{STAN.create_guid}".freeze
 
       if @nats.nil?
@@ -159,6 +163,9 @@ module STAN
         data: payload
       })
 
+      # Use buffered queue to control number of outstanding acks
+      @pending_pub_acks << :ack
+
       if blk
         # Asynchronously handled if block given
         synchronize do
@@ -175,15 +182,13 @@ module STAN
             @pub_ack_map.delete(ack.guid)
           end
 
-          # Use buffered queue to control number of outstanding acks
-          @pub_ack_queue << :ack
-
           nats.publish(stan_subject, pe.to_proto, @ack_subject)
         end
       else
-        # Waits for response before giving back control
+        # No block means waiting for response before giving back control
         future = new_cond
         opts[:timeout] ||= DEFAULT_ACK_WAIT
+
         synchronize do
           # Map ack to guid
           ack_response = nil
@@ -194,9 +199,6 @@ module STAN
             ack_response = ack
             future.signal
           end
-
-          # Use buffered queue to control number of outstanding acks
-          @pub_ack_queue << :ack
 
           # Send publish request and wait for the ack response
           nats.publish(stan_subject, pe.to_proto, @ack_subject)
@@ -328,13 +330,13 @@ module STAN
         raise Error.new(pub_ack.error)
       end
 
+      # Unblock publishing queue
+      @pending_pub_acks.pop if @pending_pub_acks.size > 0
+
       synchronize do
         # yield the ack response back to original publisher caller
         if cb = @pub_ack_map[pub_ack.guid]
           cb.call(pub_ack)
-
-          # Unblock publishing queue
-          @pub_ack_queue.pop if @pub_ack_queue.size > 0
         end
       end
     end

@@ -88,6 +88,29 @@ describe 'Client - Specification' do
       end
     end
 
+    it 'should publish and allow controlling inflight published acks' do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      with_nats(opts) do |nc|
+        stan = STAN::Client.new
+        acks = []
+        done = stan.new_cond
+        stan.connect("test-cluster", client_id, { max_pub_acks_inflight: 100, nats: nc }) do |sc|
+          1024.times do |n|
+            sc.publish("hello", "world-#{n}") do |guid, error|
+              acks << guid
+              expect(error).to be_nil
+              done.signal if acks.count == 1024
+            end
+          end
+        end
+
+        stan.synchronize do
+          done.wait(1)
+        end
+        expect(acks.count).to eql(1024)
+      end
+    end
+
     it 'should reconnect even if not closing gracefully after first connect' do
       opts = { :servers => ['nats://127.0.0.1:4222'] }
       with_nats(opts) do |nc|
