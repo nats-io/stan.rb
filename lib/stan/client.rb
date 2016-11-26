@@ -33,7 +33,7 @@ module STAN
   class Client
     include MonitorMixin
 
-    attr_reader :nats, :options, :client_id, :sub_map, :unsub_req_subject
+    attr_reader :nats, :options, :client_id, :sub_map, :unsub_req_subject, :pending_pub_acks
 
     def initialize
       super
