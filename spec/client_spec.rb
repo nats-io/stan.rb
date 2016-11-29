@@ -105,7 +105,7 @@ describe 'Client - Specification' do
         end
 
         stan.synchronize do
-          done.wait(1)
+          done.wait(2)
         end
         expect(acks.count).to eql(1024)
       end
