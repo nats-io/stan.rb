@@ -33,7 +33,7 @@ module STAN
   class Client
     include MonitorMixin
 
-    attr_reader :nats, :options, :client_id, :sub_map, :unsub_req_subject, :pending_pub_acks
+    attr_reader :nats, :options, :client_id, :sub_map, :unsub_req_subject, :sub_close_req_subject, :pending_pub_acks
 
     def initialize
       super
@@ -71,6 +71,7 @@ module STAN
       @sub_req_subject   = nil
       @unsub_req_subject = nil
       @close_req_subject = nil
+      @sub_close_req_subject = nil
 
       # For initial connect request to discover subjects used by
       # the streaming server.
@@ -139,6 +140,7 @@ module STAN
       @sub_req_subject = resp.subRequests.freeze
       @unsub_req_subject = resp.unsubRequests.freeze
       @close_req_subject = resp.closeRequests.freeze
+      @sub_close_req_subject = resp.subCloseRequests.freeze
 
       # If callback given then we send a close request on exit
       # and wrap up session to STAN.
@@ -474,7 +476,32 @@ module STAN
     end
 
     def close
-      # TODO
+      synchronize do
+        stan.nats.unsubscribe(self.sid)
+      end
+
+      # Make client stop tracking the subscription inbox
+      # and grab close request subject under the lock.
+      sub_close_subject = nil
+      stan.synchronize do
+        stan.sub_map.delete(self.ack_inbox)
+        sub_close_subject = stan.sub_close_req_subject
+      end
+
+      sub_close_req = STAN::Protocol::SubscriptionCloseRequest.new({
+        clientID: stan.client_id,
+        subject: self.subject,
+        inbox: self.ack_inbox
+      })
+
+      raw = stan.nats.request(sub_close_subject, sub_close_req.to_proto, {
+        timeout: stan.options[:connect_timeout]
+      })
+      response = STAN::Protocol::SubscriptionResponse.decode(raw.data)
+      unless response.error.empty?
+        # FIXME: Error handling on unsubscribe/close
+        raise Error.new(response.error)
+      end
     end
   end
 

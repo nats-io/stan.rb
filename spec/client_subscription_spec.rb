@@ -145,6 +145,96 @@ describe 'Client - Subscriptions' do
         expect(msgs[n].data).to eql(n.to_s)
       end
     end
+
+    it "should be able to close durable subscriptions" do
+      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      acks = []
+      durable_sub_msgs       = []
+      plain_sub_msgs         = []
+      durable_queue_sub_msgs = []
+      plain_queue_sub_msgs   = []
+      sc = STAN::Client.new
+
+      # Connect a and publish some messages
+      with_nats(opts) do |nc|
+        sc.connect("test-cluster", client_id, nats: nc)
+
+        durable_sub = sc.subscribe("foo", durable_name: "quux") do |msg|
+          durable_sub_msgs << msg
+        end
+        plain_sub = sc.subscribe("foo") do |msg|
+          plain_sub_msgs << msg
+        end
+
+        # Queue subscriptions can coexist with regular subscriptions
+        durable_queue_sub = sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
+          durable_queue_sub_msgs << msg
+        end
+        plain_queue_sub = sc.subscribe("foo", queue: "bar") do |msg|
+          plain_queue_sub_msgs << msg
+        end
+
+        # Publish synchronously a batch of messages...
+        0.upto(4).each {|n| acks << sc.publish("foo", n.to_s) }
+        [durable_sub_msgs, plain_sub_msgs, durable_queue_sub_msgs, plain_queue_sub_msgs, acks].each do |n|
+          expect(n.count).to eql(5)
+        end
+
+        # Remove the interest in the subscription
+        [durable_sub, plain_sub, durable_queue_sub, plain_queue_sub].each do |sub|
+          expect do
+            sub.close
+          end.to_not raise_error
+        end
+
+        5.upto(9).each {|n| acks << sc.publish("foo", n.to_s) }
+        expect(acks.count).to eql(10)
+
+        # Number of messages should have not increased since we are no longer subscribed
+        [durable_sub_msgs, plain_sub_msgs, durable_queue_sub_msgs, plain_queue_sub_msgs].each do |n|
+          expect(n.count).to eql(5)
+        end
+
+        # Then, replay all the durable subscriptions...
+        durable_sub = sc.subscribe("foo", durable_name: "quux", start_at: :last_received) do |msg|
+          durable_sub_msgs << msg
+        end
+
+        # Last receive here would replay us the first available message for us
+        plain_sub = sc.subscribe("foo", start_at: :last_received) do |msg|
+          plain_sub_msgs << msg
+        end
+
+        durable_queue_sub = sc.subscribe("foo", queue: "bar", durable_name: "quux", start_at: :last_received) do |msg|
+          durable_queue_sub_msgs << msg
+        end
+        plain_queue_sub = sc.subscribe("foo", queue: "bar", start_at: :last_received) do |msg|
+          plain_queue_sub_msgs << msg
+        end
+
+        # Confirm durable subscription does give us all the messages which we missed
+        expect(durable_sub_msgs.count).to eql(10)
+        expect(durable_sub_msgs.first.seq).to eql(1)
+        expect(durable_sub_msgs.last.seq).to eql(10)
+        expect(durable_queue_sub_msgs.count).to eql(10)
+        expect(durable_queue_sub_msgs.first.seq).to eql(1)
+        expect(durable_queue_sub_msgs.last.seq).to eql(10)
+
+        # We get first available for the subscription here
+        expect(plain_sub_msgs.count).to eql(6)
+        expect(plain_sub_msgs.first.seq).to eql(1)
+        expect(plain_sub_msgs.last.seq).to eql(10)
+
+        # We don't get any newly available message here
+        expect(plain_queue_sub_msgs.count).to eql(5)
+        expect(plain_queue_sub_msgs.first.seq).to eql(1)
+        expect(plain_queue_sub_msgs.last.seq).to eql(5)
+
+        expect do
+          sc.close
+        end.to_not raise_error
+      end
+    end
   end
 
   context 'with a distribution queue group' do
