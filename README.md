@@ -2,12 +2,12 @@
 
 A [Ruby](http://ruby-lang.org) client the [NATS Streaming](http://nats.io/documentation/streaming/nats-streaming-intro/) platform.
 
-[![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)[![Build Status](https://travis-ci.org/wallyqs/ruby-nats-streaming.svg)](http://travis-ci.org/wallyqs/ruby-nats-streaming)
+[![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)[![Build Status](https://travis-ci.org/wallyqs/nats-streaming.svg)](http://travis-ci.org/wallyqs/nats-streaming)
 
 ## Getting Started
 
 ```bash
-gem install ruby-nats-streaming
+gem install nats-streaming
 ```
 
 ## Basic Usage

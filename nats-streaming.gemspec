@@ -1,7 +1,7 @@
 require File.expand_path('../lib/stan/version', __FILE__)
 
 spec = Gem::Specification.new do |s|
-  s.name = 'ruby-nats-streaming'
+  s.name = 'nats-streaming'
   s.version = STAN::VERSION
   s.summary = 'Ruby client for the NATS Streaming messaging system.'
   s.homepage = 'https://nats.io'
