@@ -488,7 +488,7 @@ module STAN
         sub_close_subject = stan.sub_close_req_subject
       end
 
-      sub_close_req = STAN::Protocol::SubscriptionCloseRequest.new({
+      sub_close_req = STAN::Protocol::UnsubscribeRequest.new({
         clientID: stan.client_id,
         subject: self.subject,
         inbox: self.ack_inbox
