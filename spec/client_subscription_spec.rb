@@ -556,11 +556,11 @@ describe 'Client - Subscriptions' do
           end
 
           # Wait a bit for the messages to have been published
-          sleep 1
+          sleep 2
         end
       end
 
-      expect(msgs.count).to eql(10)
+      expect(msgs.count > 10).to eql(true)
       expect(acks.count).to eql(100)
     end
 
