@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ruby-nats-streaming (0.1.0)
+    nats-streaming (0.1.0)
       google-protobuf
       nats-pure
 
@@ -30,9 +30,9 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  nats-streaming!
   rake
   rspec
-  ruby-nats-streaming!
 
 BUNDLED WITH
-   1.12.5
+   1.13.6

@@ -64,11 +64,6 @@ Google::Protobuf::DescriptorPool.generated_pool.build do
     optional :inbox, :string, 3
     optional :durableName, :string, 4
   end
-  add_message "STAN.Protocol.SubscriptionCloseRequest" do
-    optional :clientID, :string, 1
-    optional :subject, :string, 2
-    optional :inbox, :string, 3
-  end
   add_message "STAN.Protocol.CloseRequest" do
     optional :clientID, :string, 1
   end
@@ -95,7 +90,6 @@ module STAN
     SubscriptionRequest = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.SubscriptionRequest").msgclass
     SubscriptionResponse = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.SubscriptionResponse").msgclass
     UnsubscribeRequest = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.UnsubscribeRequest").msgclass
-    SubscriptionCloseRequest = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.SubscriptionCloseRequest").msgclass
     CloseRequest = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.CloseRequest").msgclass
     CloseResponse = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.CloseResponse").msgclass
     StartPosition = Google::Protobuf::DescriptorPool.generated_pool.lookup("STAN.Protocol.StartPosition").enummodule
