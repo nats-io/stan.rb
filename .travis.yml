@@ -1,8 +1,6 @@
 rvm:
   - 2.2
-  - 2.3.2
-  - 2.4.0
-  - ruby-head
+  - 2.3.3
 
 cache:
   directories:
@@ -16,7 +14,3 @@ before_script:
 
 sudo: required
 dist: trusty
-
-matrix:
-  allow_failures:
-    - rvm: ruby-head
