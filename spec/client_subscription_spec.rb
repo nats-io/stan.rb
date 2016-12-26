@@ -23,7 +23,7 @@ describe 'Client - Subscriptions' do
   end
 
   it "should be able to subscribe and unsubscribe" do
-    opts = { :servers => ['nats://127.0.0.1:4222'] }
+    opts = { :servers => [@s.uri] }
     acks = []
     msgs = []
     stan = STAN::Client.new
@@ -53,7 +53,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :last_received)' do
     it "should be able to use durable name to start at last received on streaming reconnect" do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       queue_msgs = []
@@ -147,7 +147,7 @@ describe 'Client - Subscriptions' do
     end
 
     it "should be able to close durable subscriptions" do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       durable_sub_msgs       = []
       plain_sub_msgs         = []
@@ -240,7 +240,7 @@ describe 'Client - Subscriptions' do
   context 'with a distribution queue group' do
     it "should be able to distribute messages" do
       clients = Hash.new {|h,k| h[k] = {} }
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
 
       # Prepare a few parallel connections to NATS
       ('A'...'E').each do |n|
@@ -288,7 +288,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :time, time: $time)' do
     it 'should replay messages older than an hour' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -329,7 +329,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :timedelta, time: $time)' do
     it 'should replay messages older than 2 sec' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -382,7 +382,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :first)' do
     it 'should replay all the messages' do
-      opts = { :servers => ['nats://127.0.0.1:4222']}
+      opts = { :servers => [@s.uri]}
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -434,7 +434,7 @@ describe 'Client - Subscriptions' do
     end
 
     it 'should receive all messages capped by max inflight with auto acks' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -478,7 +478,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(start_at: :sequence, sequence: $seq)' do
     it 'should replay messages starting from sequence' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
 
@@ -528,7 +528,7 @@ describe 'Client - Subscriptions' do
 
   context 'with subscribe(deliver_all_available: true, manual_acks: true)' do
     it 'should receive max inflight only if it does not ack' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -537,10 +537,7 @@ describe 'Client - Subscriptions' do
           to_send = 100
 
           1.upto(to_send).each do |n|
-            sc.publish("hello", "world-#{n}") do |guid, error|
-              acks << guid
-              expect(error).to be_nil
-            end
+            acks << sc.publish("hello", "world-#{n}")
           end
 
           sub_opts = {
@@ -560,12 +557,12 @@ describe 'Client - Subscriptions' do
         end
       end
 
-      expect(msgs.count > 10).to eql(true)
       expect(acks.count).to eql(100)
+      expect(msgs.count > 10).to eql(true)
     end
 
     it 'should receive all messages capped by max inflight with manual acks' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -605,7 +602,7 @@ describe 'Client - Subscriptions' do
     end
 
     it "should redeliver the messages from start on ack timeout" do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
@@ -639,7 +636,7 @@ describe 'Client - Subscriptions' do
           end
 
           # Wait a bit for the messages to have been published
-          sleep 1.1
+          sleep 1.5
         end
       end
 
@@ -655,7 +652,7 @@ describe 'Client - Subscriptions' do
     end
 
     it "should redeliver the messages without processed acks on ack timeout" do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       acks = []
       msgs = []
       with_nats(opts) do |nc|
