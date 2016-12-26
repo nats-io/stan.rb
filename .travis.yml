@@ -1,0 +1,22 @@
+rvm:
+  - 2.2
+  - 2.3.2
+  - 2.4.0
+  - ruby-head
+
+cache:
+  directories:
+  - $HOME/nats-streaming-server
+
+before_install:
+  - bash ./scripts/install_server.sh
+
+before_script:
+  - export PATH=$HOME/nats-streaming-server:$PATH
+
+sudo: required
+dist: trusty
+
+matrix:
+  allow_failures:
+    - rvm: ruby-head
