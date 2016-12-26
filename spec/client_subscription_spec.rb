@@ -571,10 +571,7 @@ describe 'Client - Subscriptions' do
           to_send = 100
 
           1.upto(to_send).each do |n|
-            sc.publish("hello", "world-#{n}") do |guid, error|
-              acks << guid
-              expect(error).to be_nil
-            end
+            acks << sc.publish("hello", "world-#{n}")
           end
 
           sub_opts = {
@@ -611,10 +608,7 @@ describe 'Client - Subscriptions' do
           to_send = 100
 
           1.upto(to_send).each do |n|
-            sc.publish("hello", "world-#{n}") do |guid, error|
-              acks << guid
-              expect(error).to be_nil
-            end
+            acks << sc.publish("hello", "world-#{n}")
           end
 
           sub_opts = {
@@ -636,7 +630,7 @@ describe 'Client - Subscriptions' do
           end
 
           # Wait a bit for the messages to have been published
-          sleep 1.5
+          sleep 1.7
         end
       end
 
@@ -661,10 +655,7 @@ describe 'Client - Subscriptions' do
           to_send = 100
 
           1.upto(to_send).each do |n|
-            sc.publish("hello", "world-#{n}") do |guid, error|
-              acks << guid
-              expect(error).to be_nil
-            end
+            acks << sc.publish("hello", "world-#{n}")
           end
 
           sub_opts = {

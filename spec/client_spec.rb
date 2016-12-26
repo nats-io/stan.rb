@@ -54,7 +54,7 @@ describe 'Client - Specification' do
     end
 
     it 'should publish and ack messages' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       with_nats(opts) do |nc|
         # Borrow the connection to NATS, meaning that we will
         # not be owning the connection.
@@ -89,7 +89,7 @@ describe 'Client - Specification' do
     end
 
     it 'should publish and allow controlling inflight published acks' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       with_nats(opts) do |nc|
         stan = STAN::Client.new
         acks = []
@@ -105,14 +105,14 @@ describe 'Client - Specification' do
         end
 
         stan.synchronize do
-          done.wait(2)
+          done.wait(3)
         end
         expect(acks.count).to eql(1024)
       end
     end
 
     it 'should reconnect even if not closing gracefully after first connect' do
-      opts = { :servers => ['nats://127.0.0.1:4222'] }
+      opts = { :servers => [@s.uri] }
       with_nats(opts) do |nc|
         sc = STAN::Client.new
         acks = []
@@ -154,7 +154,7 @@ describe 'Client - Specification' do
   context 'when not borrowing NATS connection' do
     it 'should connect and disconnect from NATS on block exit' do
       stan = STAN::Client.new
-      opts = { :servers => ["nats://127.0.0.1:4222"] }
+      opts = { :servers => [@s.uri] }
       msgs = []
       acks = []
       stan.connect("test-cluster", "client-123", nats: opts) do |sc|
