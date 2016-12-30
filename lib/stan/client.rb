@@ -254,7 +254,7 @@ module STAN
         reply = nil
         response = nil
         begin
-          reply = nats.request(@sub_req_subject, sr.to_proto, timeout: DEFAULT_CONNECT_TIMEOUT)
+          reply = nats.request(@sub_req_subject, sr.to_proto, timeout: options[:connect_timeout])
           response = STAN::Protocol::SubscriptionResponse.decode(reply.data)
         rescue NATS::IO::Timeout, Google::Protobuf::ParseError => e
           # FIXME: Error handling on unsubscribe
