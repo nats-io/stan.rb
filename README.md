@@ -2,7 +2,7 @@
 
 A [Ruby](http://ruby-lang.org) client for the [NATS Streaming](http://nats.io/documentation/streaming/nats-streaming-intro/) platform.
 
-[![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)[![Build Status](https://travis-ci.org/nats-io/ruby-nats-streaming.svg)](http://travis-ci.org/nats-io/ruby-nats-streaming)
+[![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)[![Build Status](https://travis-ci.org/nats-io/ruby-nats-streaming.svg)](http://travis-ci.org/nats-io/ruby-nats-streaming)[![Gem Version](https://d25lcipzij17d.cloudfront.net/badge.svg?id=rb&type=5&v=0.1.0)](https://rubygems.org/gems/nats-streaming/versions/0.1.0)
 
 ## Getting Started
 
