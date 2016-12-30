@@ -125,6 +125,7 @@ module STAN
       # Setup acks and heartbeats processing callbacks
       @hb_inbox_sid    = nats.subscribe(@hb_inbox)    { |raw| process_heartbeats(raw) }
       @ack_subject_sid = nats.subscribe(@ack_subject) { |raw| process_ack(raw) }
+      nats.flush
 
       # Initial connect request to discover subjects to be used
       # for communicating with STAN.
@@ -238,6 +239,7 @@ module STAN
         # Listen for actual messages
         sid = nats.subscribe(sub.inbox) { |raw, reply, subject| process_msg(raw, reply, subject) }
         sub.sid = sid
+        nats.flush
 
         # Create the subscription request announcing the inbox on which
         # we have made the NATS subscription for processing messages.
@@ -254,7 +256,7 @@ module STAN
         reply = nil
         response = nil
         begin
-          reply = nats.request(@sub_req_subject, sr.to_proto, timeout: DEFAULT_CONNECT_TIMEOUT)
+          reply = nats.request(@sub_req_subject, sr.to_proto, timeout: options[:connect_timeout])
           response = STAN::Protocol::SubscriptionResponse.decode(reply.data)
         rescue NATS::IO::Timeout, Google::Protobuf::ParseError => e
           # FIXME: Error handling on unsubscribe
