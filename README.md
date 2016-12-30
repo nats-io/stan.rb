@@ -85,7 +85,7 @@ Doing this causes the NATS Streaming server to track the last acknowledged messa
 `clientID + durable name`, so that only messages since the last acknowledged message
 will be delivered to the client.
 
-```
+```ruby
 # Subscribe with durable name
 sc.subscribe("foo", durable_name: "bar") do |msg|
   puts "Received a message (seq: #{msg.seq}): #{msg.data}"
