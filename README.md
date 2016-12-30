@@ -254,6 +254,65 @@ end
 sc.close
 ```
 
+## Rate limiting/matching
+
+A classic problem of publish-subscribe messaging is matching the rate of message
+producers with the rate of message consumers. Message producers can often outpace
+the speed of the subscribers that are consuming their messages. This mismatch is
+commonly called a "fast producer/slow consumer" problem, and may result in dramatic
+resource utilization spikes in the underlying messaging system as it tries to
+buffer messages until the slow consumer(s) can catch up.
+
+### Publisher rate limiting
+
+NATS Streaming provides a connection option called `:max_pub_acks_inflight`
+that effectively limits the number of unacknowledged messages that a
+publisher may have in-flight at any given time.  When this maximum is
+reached, further `publish` calls will block until the number of
+unacknowledged messages falls below the specified limit.
+
+```ruby
+# Customize max number of inflight acks to be processed
+sc.connect("test-cluster", "client-123", max_pub_acks_inflight: 1024, nats: opts)
+
+8192.times do |n|
+  # If the server is unable to keep up with the publisher, the number of oustanding
+  # acks will eventually reach the max and this call will block
+  start_time = Time.now
+
+  # Publish asynchronously by giving a block
+  sc.publish("foo", "Hello World") do |guid|
+    end_time = Time.now
+    puts "Received ack ##{n} with guid=#{guid} in #{end_time - start_time}"
+  end
+end
+```
+
+### Subscriber rate limiting
+
+Rate limiting may also be accomplished on the subscriber side, on a
+per-subscription basis, using a subscription option called `:max_inflight`.
+This option specifies the maximum number of outstanding
+acknowledgements (messages that have been delivered but not
+acknowledged) that NATS Streaming will allow for a given
+subscription.  When this limit is reached, NATS Streaming will suspend
+delivery of messages to this subscription until the number of
+unacknowledged messages falls below the specified limit.
+
+```ruby
+# Subscribe with manual ack mode and a max in-flight limit of 25
+sc.subscribe("foo", max_inflight: 25, manual_acks: true) do |msg|
+  puts "Received message with seq=#{msg.seq}"
+
+  # Manually ack the message
+  sc.ack(msg)
+end
+
+8192.times do |n|
+  sc.publish("foo", "Hello World")
+end
+```
+
 ## License
 
 (The MIT License)
