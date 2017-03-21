@@ -2,8 +2,8 @@ PATH
   remote: .
   specs:
     nats-streaming (0.2.0)
-      google-protobuf
-      nats-pure
+      google-protobuf (~> 3)
+      nats-pure (~> 0)
 
 GEM
   remote: https://rubygems.org/
