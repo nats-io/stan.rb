@@ -114,13 +114,25 @@ def wait_for(future, opts={})
   fail if duration > opts[:timeout]
 end
 
-def with_nats(opts={})
-  nc = NATS::IO::Client.new
-  begin
-    nc.connect(opts)
-    yield nc
-  ensure
-    nc.close
+def with_nats(opts={}, &blk)
+  conns = []
+  blk.arity.times do
+    conns << NATS::IO::Client.new
   end
-rescue
+  begin
+    conns.each do |nc|
+      nc.connect(opts)
+    end
+
+    case blk.arity
+    when 1
+      blk.call(conns.first)
+    else
+      blk.call(conns)
+    end
+  ensure
+    conns.each do |nc|
+      nc.close
+    end
+  end
 end

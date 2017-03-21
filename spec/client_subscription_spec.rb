@@ -63,7 +63,7 @@ describe 'Client - Subscriptions' do
 
       # Connect a and publish some messages
       with_nats(opts) do |nc|
-        sc.connect("test-cluster", client_id, nats: nc)
+        sc.connect("test-cluster", client_id, { connect_timeout: 2, nats: nc })
 
         sc.subscribe("foo", durable_name: "quux") do |msg|
           msgs << msg
@@ -73,12 +73,15 @@ describe 'Client - Subscriptions' do
         sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
           queue_msgs << msg
         end
+
         sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
           queue_msgs << msg
         end
+
         sc.subscribe("foo", queue: "bar") do |msg|
           non_durable_queue_msgs << msg
         end
+
         sc.subscribe("foo") do |msg|
           plain_sub_msgs << msg
         end
@@ -103,10 +106,12 @@ describe 'Client - Subscriptions' do
       expect(msgs.count).to eql(5)
 
       # Reconnect trying to fetch last received message
+      sc = STAN::Client.new
+
       non_durable_msgs = []
-      with_nats(opts) do |nc|
+      with_nats(opts) do |_, nc|
         # Reconnect to STAN
-        sc.connect("test-cluster", client_id, nats: nc)
+        sc.connect("test-cluster", client_id, { connect_timeout: 10, nats: nc })
 
         # Publish new messages and let subscription gather
         # then via durable name and start receive.
