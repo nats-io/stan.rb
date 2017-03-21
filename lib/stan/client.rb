@@ -2,6 +2,7 @@ require 'stan/pb/protocol.pb'
 require 'nats/io/client'
 require 'securerandom'
 require 'monitor'
+require 'stan/version'
 
 module STAN
 
