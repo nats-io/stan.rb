@@ -21,6 +21,29 @@ describe 'Client - Specification' do
     sleep 1
   end
 
+  context "with invalid connections" do
+    it "should raise exception on publish" do
+      stan = STAN::Client.new
+      expect do
+        stan.publish("hello", "world")
+      end.to raise_error(STAN::BadConnectionError)
+    end
+
+    it "should raise exception on subscribe" do
+      stan = STAN::Client.new
+      expect do
+        stan.subscribe("hello") { }
+      end.to raise_error(STAN::BadConnectionError)
+    end
+
+    it "should raise exception on close" do
+      stan = STAN::Client.new
+      expect do
+        stan.close
+      end.to_not raise_error
+    end
+  end
+
   context "with borrowed NATS connection" do
     it 'should connect to STAN and close session upon connect block exit' do
       # Borrow the connection to NATS, meaning that we will
@@ -111,7 +134,7 @@ describe 'Client - Specification' do
       end
     end
 
-    it 'should reconnect even if not closing gracefully after first connect' do
+    it 'should error on reconnect if not closing gracefully after first connect' do
       opts = { :servers => [@s.uri] }
       with_nats(opts) do |nc|
         sc = STAN::Client.new
@@ -131,23 +154,22 @@ describe 'Client - Specification' do
         sc = STAN::Client.new
         expect do
           sc.connect("test-cluster", client_id, nats: nc, connect_timeout: 0.250)
-        end.to raise_error(NATS::IO::TimeoutError)
+        end.to raise_error(STAN::ConnectReqTimeoutError)
       end
 
+      acks = []
       with_nats(opts) do |nc|
         sc = STAN::Client.new
-        acks = []
         expect do
           sc.connect("test-cluster", client_id, nats: nc, connect_timeout: 1) do
             10.times do |n|
               guid = sc.publish("hello", "world-#{n}")
               acks << guid
             end
-
-            expect(acks.count).to eql(10)
           end
-        end.to_not raise_error
+        end.to raise_error(STAN::ConnectError)
       end
+      expect(acks.count).to eql(0)
     end
   end
 

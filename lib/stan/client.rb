@@ -24,11 +24,23 @@ module STAN
   # Errors
   class Error < StandardError; end
 
-  # When we detect we cannot connect to the server
+  # When we get an error from the server during connect request
   class ConnectError < Error; end
+
+  # When we cannot connect due to an invalid connection
+  class BadConnectionError < Error; end
 
   # When we detect we have a request timeout
   class TimeoutError < Error; end
+
+  # When we detect we cannot connect to NATS Streaming
+  class ConnectReqTimeoutError < TimeoutError; end
+
+  # When we timeout making a subscription
+  class SubReqTimeoutError < TimeoutError; end
+
+  # When we timeout closing session with NATS Streaming
+  class CloseReqTimeoutError < TimeoutError; end
 
   class Client
     include MonitorMixin
@@ -117,15 +129,15 @@ module STAN
       end
 
       # If no connection to NATS present at this point then bail already
-      raise ConnectError.new("stan: invalid connection to nats") unless @nats
+      raise BadConnectionError.new("stan: invalid connection to nats") unless @nats
 
       # Heartbeat subscription
       @hb_inbox = (STAN.create_inbox).freeze
 
       # Setup acks and heartbeats processing callbacks
-      @hb_inbox_sid    = nats.subscribe(@hb_inbox)    { |raw| process_heartbeats(raw) }
-      @ack_subject_sid = nats.subscribe(@ack_subject) { |raw| process_ack(raw) }
-      nats.flush
+      @hb_inbox_sid    = nats.subscribe(@hb_inbox)    { |raw, reply, subject| process_heartbeats(raw, reply, subject) }
+      @ack_subject_sid = nats.subscribe(@ack_subject) { |raw, reply, subject| process_ack(raw, reply, subject) }
+      nats.flush(options[:connect_timeout])
 
       # Initial connect request to discover subjects to be used
       # for communicating with STAN.
@@ -135,8 +147,24 @@ module STAN
       })
 
       # TODO: Check for error and bail if required
-      raw = nats.request(@discover_subject, req.to_proto, timeout: options[:connect_timeout])
+      begin
+        raw = nats.request(@discover_subject, req.to_proto, timeout: options[:connect_timeout])
+      rescue NATS::IO::Timeout
+        raise ConnectReqTimeoutError.new("stan: failed connecting to '#{@cluster_id}'")
+      end
+
       resp = STAN::Protocol::ConnectResponse.decode(raw.data)
+      unless resp.error.empty?
+        # We didn't really connect but we call closing in order to
+        # cleanup any other present state.
+        # FIXME: Errors happening here should be reported async
+        close rescue nil
+
+        raise ConnectError.new(resp.error)
+      end
+
+      # Capture communication channels to STAN only when there
+      # have not been any errors when connecting.
       @pub_prefix = resp.pubPrefix.freeze
       @sub_req_subject = resp.subRequests.freeze
       @unsub_req_subject = resp.unsubRequests.freeze
@@ -155,6 +183,8 @@ module STAN
 
     # Publish will publish to the cluster and wait for an ack
     def publish(subject, payload, opts={}, &blk)
+      raise BadConnectionError.new unless @pub_prefix
+
       stan_subject = "#{@pub_prefix}.#{subject}"
       future = nil
       guid = STAN.create_guid
@@ -224,6 +254,8 @@ module STAN
 
     # Create subscription which dispatches messages to callback asynchronously
     def subscribe(subject, opts={}, &cb)
+      raise BadConnectionError.new unless @sub_req_subject
+
       sub_options = {}
       sub_options.merge!(opts)
       sub_options[:ack_wait] ||= DEFAULT_ACK_WAIT
@@ -239,9 +271,10 @@ module STAN
         # Listen for actual messages
         sid = nats.subscribe(sub.inbox) { |raw, reply, subject| process_msg(raw, reply, subject) }
         sub.sid = sid
-        nats.flush
+        nats.flush(options[:connect_timeout])
 
         # Create the subscription request announcing the inbox on which
+
         # we have made the NATS subscription for processing messages.
         # First, we normalize customized subscription options before
         # encoding to protobuf.
@@ -265,7 +298,7 @@ module STAN
         end
 
         unless response.error.empty?
-          # FIXME: Error handling on unsubscribe
+          # FIXME: Error handling on unsubscribe should be async
           nats.unsubscribe(sub.sid)
           raise Error.new(response.error)
         end
@@ -275,23 +308,31 @@ module STAN
 
         return sub
       end
+    rescue NATS::IO::Timeout
+      raise SubReqTimeoutError.new("stan: subscribe request timeout on '#{subject}'")
     end
 
     # Close wraps us the session with the NATS Streaming server
     def close
-      req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
-      raw = nats.request(@close_req_subject, req.to_proto)
+      # Send close when going away only if we have been able to successfully connect
+      if @close_req_subject
+        req = STAN::Protocol::CloseRequest.new(clientID: @client_id)
+        raw = nats.request(@close_req_subject, req.to_proto, timeout: options[:connect_timeout])
 
-      resp = STAN::Protocol::CloseResponse.decode(raw.data)
-      unless resp.error.empty?
-        raise Error.new(resp.error)
+        resp = STAN::Protocol::CloseResponse.decode(raw.data)
+        unless resp.error.empty?
+          raise Error.new(resp.error)
+        end
       end
+
+      # If we do not even have a connection then return already...
+      return unless @nats
 
       # TODO: If connection to nats was borrowed then we should
       # unsubscribe from all topics from STAN.  If not borrowed
       # and we own the connection, then we just close.
       begin
-        # Remove all present subscriptions
+        # Remove all related subscriptions for STAN
         @sub_map.each_pair do |_, sub|
           nats.unsubscribe(sub.sid)
         end
@@ -299,8 +340,9 @@ module STAN
         # Finally, remove the core subscriptions for STAN
         nats.unsubscribe(@hb_inbox_sid)
         nats.unsubscribe(@ack_subject_sid)
-      rescue => e
-        # TODO: Async error handling
+        nats.flush(options[:connect_timeout])
+      rescue NATS::IO::Timeout
+        raise CloseReqTimeoutError.new("stan: close request timeout")
       ensure
         if @borrowed_nats_connection
           @nats = nil
@@ -322,10 +364,14 @@ module STAN
       end
     end
 
+    def to_s
+      %Q(#<STAN::Client @cluster_id="#{@cluster_id}" @client_id="#{@client_id}">)
+    end
+
     private
 
     # Process received publishes acks
-    def process_ack(data)
+    def process_ack(data, reply, subject)
       # FIXME: This should handle errors asynchronously in case there are any
 
       # Process ack
@@ -392,6 +438,7 @@ module STAN
       sub_opts[:qGroup] = opts[:queue] if opts[:queue]
       sub_opts[:durableName] = opts[:durable_name] if opts[:durable_name]
 
+      # Must announce the clientID as part of the protocol in each subscription
       sub_opts[:clientID] = @client_id
       sub_opts[:maxInFlight] = opts[:max_inflight]
       sub_opts[:ackWaitInSecs] = opts[:ack_wait] || opts[:ack_timeout]
@@ -438,6 +485,10 @@ module STAN
       @ack_inbox = nil
       @stan = opts[:stan]
       @durable_name = opts[:durable_name]
+    end
+
+    def to_s
+      %Q(#<STAN::Subscription @subject="#{@subject}" @queue="#{@queue}" @durable_name="#{@durable_name}" @inbox="#{@inbox}" @ack_inbox="#{@ack_inbox}" @sid=#{@sid}>)
     end
 
     # Unsubscribe removes interest in the subscription.
@@ -508,15 +559,25 @@ module STAN
   end
 
   # Data holder for sent messages
-  # It should have an Ack method as well to reply back?
-  Msg = Struct.new(:proto, :sub) do
+  # FIXME: It should have an Ack method as well to reply back?
+  ::STAN::Msg = Struct.new(:proto, :sub) do
     def data
       self.proto.data
     end
     def sequence
       self.proto.sequence
     end
+    def timestamp
+      self.proto.timestamp
+    end
+    def time
+      self.proto.timestamp / 1_000_000_000.0
+    end
     alias seq sequence
+
+    def to_s
+      "#<STAN::Msg sequence=#{self.sequence} time=#{self.time.to_f} data=#{self.data}>"
+    end
   end
 
   class << self
