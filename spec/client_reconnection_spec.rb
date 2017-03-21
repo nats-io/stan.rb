@@ -75,7 +75,7 @@ describe 'Client - Reconnection' do
         end
 
         scA.connect("test-cluster", client_id, nats: nc1)
-        scA.subscribe("hello") do |msg|
+        stale_subscription_fromA = scA.subscribe("hello") do |msg|
           msgs_A << msg
         end
         1.upto(10).each do |n|
@@ -94,7 +94,7 @@ describe 'Client - Reconnection' do
         end
 
         scB.connect("test-cluster", client_id, nats: nc2)
-        scB.subscribe("hello") do |msg|
+        active_subscription_fromB = scB.subscribe("hello") do |msg|
           msgs_B << msg
         end
 
@@ -120,11 +120,33 @@ describe 'Client - Reconnection' do
 
         # Subscribing will _still_ work in the partitioned zombie client and
         # can replay all the messages from scratch.
-        sub = scA.subscribe("hello", start_at: :first) do |msg|
+        sub_from_stale_clientA = scA.subscribe("hello", start_at: :first) do |msg|
           stale_client_msgs << msg
         end
         sleep 1
         expect(stale_client_msgs.count).to eql(30)
+
+        # Trying to unsubscribe/close old subscriptions _does_ fail in
+        # the zombie duplicated client.
+        expect do
+          # Will not be able to receive more messages in this subscription either
+          stale_subscription_fromA.unsubscribe
+        end.to raise_error(STAN::Error)
+
+        expect do
+          stale_subscription_fromA.close
+        end.to raise_error(STAN::Error)
+
+        # Can also unsubscribe new subscriptions made by zombie dup client
+        # after the partition occured.
+        expect do
+          sub_from_stale_clientA.unsubscribe
+        end.to_not raise_error
+
+        # Client which has replaced zombie client can unsubscribe successfully...
+        expect do
+          active_subscription_fromB.unsubscribe
+        end.to_not raise_error
       end
       expect(acks_A.count).to eql(20)
       expect(acks_B.count).to eql(10)
