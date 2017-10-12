@@ -2,7 +2,7 @@
 
 set -e
 
-VERSION="v0.3.6"
+VERSION="v0.5.0"
 
 if [ ! "$(ls -A $HOME/nats-streaming-server)" ]; then
   mkdir -p $HOME/nats-streaming-server
