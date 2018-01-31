@@ -151,6 +151,28 @@ describe 'Client - Subscriptions' do
       end
     end
 
+    it "should be able to unsubscribe from durable subsriptions" do
+      opts = { :servers => [@s.uri] }
+      durable_sub_msgs = []
+
+      sc = STAN::Client.new
+      with_nats(opts) do |nc|
+        sc.connect("test-cluster", client_id, nats: nc)
+
+        durable_sub = sc.subscribe("foo", durable_name: "quux") do |msg|
+          durable_sub_msgs << msg
+        end
+
+        durable_queue_sub = sc.subscribe("foo", queue: "bar", durable_name: "quux") do |msg|
+          durable_queue_sub_msgs << msg
+        end
+
+        # nil means it completed successfully
+        expect(durable_sub.unsubscribe).to be nil
+        expect(durable_queue_sub.unsubscribe).to be nil
+      end
+    end
+
     it "should be able to close durable subscriptions" do
       opts = { :servers => [@s.uri] }
       acks = []
