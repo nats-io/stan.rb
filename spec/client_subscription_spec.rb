@@ -151,7 +151,7 @@ describe 'Client - Subscriptions' do
       end
     end
 
-    it "should be able to unsubscribe from durable subsriptions" do
+    it "should be able to unsubscribe from durable subscriptions" do
       opts = { :servers => [@s.uri] }
       durable_sub_msgs = []
 
