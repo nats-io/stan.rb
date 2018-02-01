@@ -516,7 +516,7 @@ module STAN
       })
 
       if self.durable_name
-        unsub_req[:durableName] = self.durable_name
+        unsub_req.durableName = self.durable_name
       end
 
       raw = stan.nats.request(unsub_subject, unsub_req.to_proto, {
