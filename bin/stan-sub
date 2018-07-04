@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+
+require 'stan/client'
+
+channel = ARGV[0]
+
+abort "Usage: stan-sub <channel>" if ARGV.count != 1
+
+opts = { servers: %w(nats://127.0.0.1:4222) }
+
+sc = STAN::Client.new
+sc.connect("test-cluster", "stan-watch", nats: opts)
+sub = sc.subscribe(channel) do |msg|
+  puts "CHANNEL: #{channel} | MESSAGE: (seq=#{msg.seq}) #{msg.data}"
+end
+
+$stdin.gets
+
+sub.unsubscribe
+sc.close

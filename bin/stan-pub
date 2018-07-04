@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+
+require 'stan/client'
+
+channel = ARGV[0]
+text    = ARGV[1..-1]&.join(" ")
+
+abort "Usage: stan-pub <channel> <text>" if ARGV.count <= 1
+
+opts = { servers: %w(nats://127.0.0.1:4222) }
+
+sc = STAN::Client.new
+sc.connect("test-cluster", "stan-pub", nats: opts)
+sc.publish(channel, text)
+sc.close
