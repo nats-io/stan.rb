@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright 2017-2018 The NATS Authors
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -145,6 +146,31 @@ describe 'Client - Specification' do
           done.wait(3)
         end
         expect(acks.count).to eql(1024)
+      end
+    end
+
+    it 'should handle messages in UTF-8' do
+      opts = { :servers => [@s.uri] }
+      with_nats(opts) do |nc|
+        sc = STAN::Client.new
+        msgs = []
+        done = sc.new_cond
+        sc.connect("test-cluster", client_id, nats: nc)
+        1024.times do |n|
+          sc.publish("hello", "こんにちは！- #{n}".b) do |guid, error|
+            expect(error).to be_nil
+          end
+        end
+
+        sc.subscribe("hello", start_at: :first) do |msg|
+          msgs << msg
+        end
+
+        sc.synchronize do
+          done.wait(3)
+        end
+        expect(msgs.count).to eql(1024)
+        expect(msgs.last.data).to eql("こんにちは！- 1023".b)
       end
     end
 
