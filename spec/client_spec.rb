@@ -132,11 +132,11 @@ describe 'Client - Specification' do
         acks = []
         done = stan.new_cond
         stan.connect("test-cluster", client_id, { max_pub_acks_inflight: 100, nats: nc }) do |sc|
-          300.times do |n|
+          200.times do |n|
             sc.publish("hello", "world-#{n}") do |guid, error|
               acks << guid
               expect(error).to be_nil
-              done.signal if acks.count == 300
+              done.signal if acks.count == 200
             end
           end
         end
@@ -144,7 +144,7 @@ describe 'Client - Specification' do
         stan.synchronize do
           done.wait(3)
         end
-        expect(acks.count).to eql(300)
+        expect(acks.count).to eql(200)
       end
     end
 
