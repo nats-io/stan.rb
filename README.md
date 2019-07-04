@@ -322,7 +322,7 @@ end
 
 ### UTF8 encode
 
-If your payload has UTF8 character, encode it before publishing.
+If your payload has UTF8 characters, encode them before publishing.
 
 ```rb
 # Fails with Encoding::UndefinedConversionError
