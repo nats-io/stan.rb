@@ -1,12 +1,12 @@
-# NATS Streaming Ruby Client
+# stan.rb - NATS Streaming Ruby Client
 
 A [Ruby](http://ruby-lang.org) client for the [NATS Streaming](http://nats.io/documentation/streaming/nats-streaming-intro/) platform.
 
 [![License Apache 2.0](https://img.shields.io/badge/License-Apache2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Build Status](https://travis-ci.org/nats-io/ruby-nats-streaming.svg)](http://travis-ci.org/nats-io/ruby-nats-streaming)
+[![Build Status](https://travis-ci.org/nats-io/stan.rb.svg)](http://travis-ci.org/nats-io/stan.rb)
 [![Gem Version](https://d25lcipzij17d.cloudfront.net/badge.svg?id=rb&type=5&v=0.2.2)](https://rubygems.org/gems/nats-streaming/versions/0.2.2)
 
-## Getting Started
+## Installing
 
 ```bash
 gem install nats-streaming
