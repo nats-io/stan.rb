@@ -82,8 +82,8 @@ Replay of messages offers great flexibility for clients wishing to
 begin processing at some earlier point in the data stream. However,
 some clients just need to pick up where they left off from an earlier
 session, without having to manually track their position in the stream
-of messages.  Durable subscriptions allow clients to assign a durable
-name to a subscription when it is created.  Doing this causes the NATS
+of messages. Durable subscriptions allow clients to assign a durable
+name to a subscription when it is created. Doing this causes the NATS
 Streaming server to track the last acknowledged message for that
 `clientID + durable name`, so that only messages since the last
 acknowledged message will be delivered to the client.
@@ -274,7 +274,7 @@ buffer messages until the slow consumer(s) can catch up.
 NATS Streaming provides a connection option called
 `:max_pub_acks_inflight` that effectively limits the number of
 unacknowledged messages that a publisher may have in-flight at any
-given time.  When this maximum is reached, further `publish` calls
+given time. When this maximum is reached, further `publish` calls
 will block until the number of unacknowledged messages falls below the
 specified limit.
 
@@ -299,10 +299,10 @@ end
 
 Rate limiting may also be accomplished on the subscriber side, on a
 per-subscription basis, using a subscription option called
-`:max_inflight`.  This option specifies the maximum number of
+`:max_inflight`. This option specifies the maximum number of
 outstanding acknowledgements (messages that have been delivered but
 not acknowledged) that NATS Streaming will allow for a given
-subscription.  When this limit is reached, NATS Streaming will suspend
+subscription. When this limit is reached, NATS Streaming will suspend
 delivery of messages to this subscription until the number of
 unacknowledged messages falls below the specified limit.
 
@@ -317,6 +317,30 @@ end
 
 8192.times do |n|
   sc.publish("foo", "Hello World")
+end
+```
+
+### UTF8 encode
+
+If your payload has UTF8 characters, encode them before publishing.
+
+```rb
+# Fails with Encoding::UndefinedConversionError
+sc.publish("hello", "こんにちは！") do |guid, error|
+end
+
+# OK
+sc.publish("hello", "こんにちは！".b) do |guid, error|
+end
+```
+
+If your payload is JSON, encode with `ascii_only: true` before publishing.
+
+```rb
+decoded_payload = JSON.generate({ hello: 'こんにちは！' }, ascii_only: true)
+# => "{\"hello\":\"\\u3053\\u3093\\u306b\\u3061\\u306f\\uff01\"}"
+
+sc.publish(subject, decoded_payload) do |guid, error|
 end
 ```
 
